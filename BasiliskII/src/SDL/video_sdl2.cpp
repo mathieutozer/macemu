@@ -2752,4 +2752,63 @@ void video_set_dirty_area(int x, int y, int w, int h)
 }
 #endif
 
+/*
+ *  Automation support - accessor functions for framebuffer
+ */
+
+uint8 *AutomationGetFrameBuffer(void)
+{
+	return the_buffer;
+}
+
+uint32 AutomationGetFrameBufferSize(void)
+{
+	return the_buffer_size;
+}
+
+uint32 AutomationGetScreenWidth(void)
+{
+	return MacScreenWidth;
+}
+
+uint32 AutomationGetScreenHeight(void)
+{
+	return MacScreenHeight;
+}
+
+uint32 AutomationGetScreenDepth(void)
+{
+	if (drv == NULL)
+		return 0;
+	VIDEO_MODE_INIT;
+	// VIDEO_MODE_DEPTH is an enum, convert to bits per pixel
+	switch ((int)VIDEO_MODE_DEPTH) {
+		case 0: return 1;   // VIDEO_DEPTH_1BIT
+		case 1: return 2;   // VIDEO_DEPTH_2BIT
+		case 2: return 4;   // VIDEO_DEPTH_4BIT
+		case 3: return 8;   // VIDEO_DEPTH_8BIT
+		case 4: return 16;  // VIDEO_DEPTH_16BIT
+		case 5: return 32;  // VIDEO_DEPTH_32BIT
+		default: return screen_depth;
+	}
+}
+
+uint32 AutomationGetBytesPerRow(void)
+{
+	if (drv == NULL)
+		return 0;
+	VIDEO_MODE_INIT;
+	return VIDEO_MODE_ROW_BYTES;
+}
+
+void AutomationLockFrameBuffer(void)
+{
+	LOCK_FRAME_BUFFER;
+}
+
+void AutomationUnlockFrameBuffer(void)
+{
+	UNLOCK_FRAME_BUFFER;
+}
+
 #endif	//ifdef ENABLE_SDL2

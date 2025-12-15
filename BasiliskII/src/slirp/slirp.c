@@ -91,7 +91,7 @@ static int get_dns_addr(struct in_addr *pdns_addr)
     
     f = fopen("/etc/resolv.conf", "r");
     if (!f) {
-#ifndef __BIND_NOSTATIC
+#if !defined(__BIND_NOSTATIC) && !defined(__APPLE__)
         if ((_res.options & RES_INIT) == 0)
             res_init();
         if (_res.nscount < 1)

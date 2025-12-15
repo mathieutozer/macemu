@@ -92,6 +92,7 @@ using std::string;
 #include "vm_alloc.h"
 #include "sigsegv.h"
 #include "rpc.h"
+#include "automation.h"
 
 #if USE_JIT
 extern void flush_icache_range(uint8 *start, uint32 size); // from compemu_support.cpp
@@ -199,6 +200,7 @@ static bool lm_area_mapped = false;	// Flag: Low Memory area mmap()ped
 
 static rpc_connection_t *gui_connection = NULL;	// RPC connection to the GUI
 static const char *gui_connection_path = NULL;	// GUI connection identifier
+static const char *automation_socket_path = NULL;	// Automation server socket path
 
 
 // Prototypes
@@ -420,6 +422,12 @@ int main(int argc, char **argv)
 			argv[i++] = NULL;
 			if (i < argc) {
 				gui_connection_path = argv[i];
+				argv[i] = NULL;
+			}
+		} else if (strcmp(argv[i], "--automation") == 0) {
+			argv[i++] = NULL;
+			if (i < argc) {
+				automation_socket_path = argv[i];
 				argv[i] = NULL;
 			}
 		} else if (strcmp(argv[i], "--break") == 0) {
@@ -797,6 +805,15 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sigint_sa, NULL);
 #endif
 
+	// Initialize automation server if requested
+	if (automation_socket_path) {
+		if (!AutomationInit(automation_socket_path)) {
+			fprintf(stderr, "Warning: Failed to initialize automation server at %s\n", automation_socket_path);
+		} else {
+			D(bug("Automation server started at %s\n", automation_socket_path));
+		}
+	}
+
 #ifndef USE_CPU_EMUL_SERVICES
 #if defined(HAVE_PTHREADS)
 
@@ -927,6 +944,9 @@ void QuitEmulator(void)
 		pthread_join(xpram_thread, NULL);
 	}
 #endif
+
+	// Stop automation server
+	AutomationExit();
 
 	// Deinitialize everything
 	ExitAll();
@@ -1213,6 +1233,11 @@ static void one_second(void)
 
 static void one_tick(...)
 {
+	// Automation polling disabled
+	// if (AutomationEnabled()) {
+	// 	AutomationPoll(0);
+	// }
+
 	static int tick_counter = 0;
 	if (++tick_counter > 60) {
 		tick_counter = 0;
