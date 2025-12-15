@@ -59,7 +59,14 @@ B2ScreenView *sharedScreenView = nil;
     [self addVideoMode:CGSizeMake(800, 600) to:videoModes];
     [self addVideoMode:CGSizeMake(832, 624) to:videoModes];
     [self addVideoMode:CGSizeMake(1024, 768) to:videoModes];
-    
+  [self addVideoMode:CGSizeMake(1133, 744) to:videoModes];
+  [self addVideoMode:CGSizeMake(1133/2, 744/2) to:videoModes];
+  [self addVideoMode:CGSizeMake(1133/3, 744/3) to:videoModes];
+
+  [self addVideoMode:CGSizeMake(512, 496) to:videoModes]; // portrait minus keyboard
+  [self addVideoMode:CGSizeMake(512, 672) to:videoModes]; // portrait "full" screen
+  [self addVideoMode:CGSizeMake(683, 502) to:videoModes]; // landscape "full" screen
+
     // custom size
     CGSize customSize = CGSizeFromString([defaults valueForKey:@"videoSize"]);
     _hasCustomVideoMode = [self addVideoMode:customSize to:videoModes];
@@ -105,7 +112,8 @@ B2ScreenView *sharedScreenView = nil;
         _screenBounds = CGRectIntegral(_screenBounds);
         videoLayer.frame = _screenBounds;
         BOOL scaleIsIntegral = (floor(screenScale) == screenScale);
-        NSString *filter = scaleIsIntegral ? kCAFilterNearest : kCAFilterLinear;
+        NSString *filter = kCAFilterNearest;
+//        NSString *filter = scaleIsIntegral ? kCAFilterNearest : kCAFilterLinear;
         videoLayer.magnificationFilter = filter;
         videoLayer.minificationFilter = filter;
     }

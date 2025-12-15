@@ -862,7 +862,7 @@
 						ProvisioningStyle = Automatic;
 					};
 					2898F44D18CB719600FE7806 = {
-						DevelopmentTeam = UJXNDZ5TNU;
+						DevelopmentTeam = H23953S93T;
 						SystemCapabilities = {
 							com.apple.iCloud = {
 								enabled = 0;
@@ -1251,6 +1251,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				DEVELOPMENT_TEAM = H23953S93T;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "BasiliskII/BasiliskII-Prefix.pch";
 				GCC_STRICT_ALIASING = NO;
@@ -1280,6 +1281,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
+				DEVELOPMENT_TEAM = H23953S93T;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "BasiliskII/BasiliskII-Prefix.pch";
 				GCC_STRICT_ALIASING = NO;

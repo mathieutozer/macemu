@@ -23,7 +23,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define DEBUG 0
+#define DEBUG 1
 #include "debug.h"
 
 // Simple socket server (bypassing RPC library)
@@ -186,7 +186,12 @@ static bool send_int32(int sock, int32_t val) {
 
 static bool recv_int32(int sock, int32_t *val) {
     int32_t nval;
-    if (recv(sock, &nval, 4, 0) != 4) return false;
+    ssize_t n = recv(sock, &nval, 4, 0);
+    if (n != 4) {
+        printf("recv_int32: recv returned %zd, errno=%d (%s)\n", n, errno, strerror(errno));
+        fflush(stdout);
+        return false;
+    }
     *val = ntohl(nval);
     return true;
 }
@@ -199,18 +204,33 @@ static bool send_uint32(int sock, uint32_t val) {
 // Read a string from socket (TYPE_STRING, length, chars)
 static char *recv_string(int sock) {
     int32_t len;
-    if (!recv_int32(sock, &len) || len < 0 || len > 10000) return NULL;
+    if (!recv_int32(sock, &len)) {
+        printf("recv_string: failed to read length\n");
+        fflush(stdout);
+        return NULL;
+    }
+    printf("recv_string: len=%d\n", len);
+    fflush(stdout);
+    if (len < 0 || len > 10000) {
+        printf("recv_string: invalid length\n");
+        fflush(stdout);
+        return NULL;
+    }
     char *str = (char *)malloc(len + 1);
     if (!str) return NULL;
     if (len > 0) {
         ssize_t received = 0;
         while (received < len) {
             ssize_t n = recv(sock, str + received, len - received, 0);
+            printf("recv_string: recv returned %zd\n", n);
+            fflush(stdout);
             if (n <= 0) { free(str); return NULL; }
             received += n;
         }
     }
     str[len] = '\0';
+    printf("recv_string: result='%s'\n", str);
+    fflush(stdout);
     return str;
 }
 
@@ -227,7 +247,20 @@ static bool handle_command(int sock) {
     int32_t start, method_id;
 
     // Read: START, method_id
-    if (!recv_int32(sock, &start) || start != RPC_START) return false;
+    printf("handle_command: reading RPC_START...\n");
+    fflush(stdout);
+    if (!recv_int32(sock, &start)) {
+        printf("handle_command: failed to read RPC_START\n");
+        fflush(stdout);
+        return false;
+    }
+    printf("handle_command: got start=%d (expected %d)\n", start, RPC_START);
+    fflush(stdout);
+    if (start != RPC_START) {
+        printf("handle_command: start != RPC_START, returning false\n");
+        fflush(stdout);
+        return false;
+    }
     if (!recv_int32(sock, &method_id)) return false;
 
     D(bug("Automation: received method %d\n", method_id));
@@ -355,34 +388,50 @@ static bool handle_command(int sock) {
         }
 
         case METHOD_TYPE_TEXT: {
-            int32_t type, len;
-            recv_int32(sock, &type);  // TYPE_STRING
-            char *text = recv_string(sock);
-            int32_t end;
-            recv_int32(sock, &end);
+            int32_t type;
+            if (!recv_int32(sock, &type)) {
+                printf("TYPE_TEXT: failed to read type tag\n");
+                fflush(stdout);
+                return false;  // Protocol error, disconnect
+            }
+            printf("TYPE_TEXT: type tag = %d (expected %d)\n", type, TYPE_STRING);
+            fflush(stdout);
 
-            D(bug("Automation: type_text(\"%s\")\n", text ? text : ""));
-            if (text) {
-                for (int i = 0; text[i] != '\0'; i++) {
-                    unsigned char c = text[i];
-                    if (c < 128) {
-                        int keycode = ascii_to_keycode[c];
-                        if (keycode >= 0) {
-                            if (needs_shift[c]) {
-                                ADBKeyDown(MAC_KEY_SHIFT);
-                            }
-                            ADBKeyDown(keycode);
-                            usleep(10000);
-                            ADBKeyUp(keycode);
-                            if (needs_shift[c]) {
-                                ADBKeyUp(MAC_KEY_SHIFT);
-                            }
-                            usleep(20000);
+            char *text = recv_string(sock);
+            if (!text) {
+                printf("TYPE_TEXT: recv_string failed\n");
+                fflush(stdout);
+                return false;  // Protocol error, disconnect
+            }
+
+            int32_t end;
+            if (!recv_int32(sock, &end)) {
+                printf("TYPE_TEXT: failed to read END tag\n");
+                fflush(stdout);
+                free(text);
+                return false;
+            }
+
+            D(bug("Automation: type_text(\"%s\")\n", text));
+            for (int i = 0; text[i] != '\0'; i++) {
+                unsigned char c = text[i];
+                if (c < 128) {
+                    int keycode = ascii_to_keycode[c];
+                    if (keycode >= 0) {
+                        if (needs_shift[c]) {
+                            ADBKeyDown(MAC_KEY_SHIFT);
                         }
+                        ADBKeyDown(keycode);
+                        usleep(10000);
+                        ADBKeyUp(keycode);
+                        if (needs_shift[c]) {
+                            ADBKeyUp(MAC_KEY_SHIFT);
+                        }
+                        usleep(20000);
                     }
                 }
-                free(text);
             }
+            free(text);
             send_empty_reply(sock);
             break;
         }
@@ -511,7 +560,12 @@ static void *automation_thread_func(void *arg)
             continue;
         }
 
-        D(bug("Automation: client connected\n"));
+        // Set client socket to blocking mode (it may inherit non-blocking from server)
+        int flags = fcntl(client_socket, F_GETFL, 0);
+        fcntl(client_socket, F_SETFL, flags & ~O_NONBLOCK);
+
+        printf("Automation: client connected (fd=%d)\n", client_socket);
+        fflush(stdout);
 
         // Handle commands until client disconnects
         while (automation_thread_running) {
@@ -522,19 +576,26 @@ static void *automation_thread_func(void *arg)
 
             ret = select(client_socket + 1, &rfds, NULL, NULL, &tv);
             if (ret > 0) {
+                printf("Automation: handling command...\n");
+                fflush(stdout);
                 if (!handle_command(client_socket)) {
-                    D(bug("Automation: client disconnected (handle_command failed)\n"));
+                    printf("Automation: handle_command failed\n");
+                    fflush(stdout);
                     break;  // Client disconnected
                 }
+                printf("Automation: command handled successfully\n");
+                fflush(stdout);
             } else if (ret < 0) {
-                D(bug("Automation: select error\n"));
+                printf("Automation: select error (errno=%d)\n", errno);
+                fflush(stdout);
                 break;  // Error
             }
         }
 
         close(client_socket);
         client_socket = -1;
-        D(bug("Automation: client disconnected\n"));
+        printf("Automation: client disconnected\n");
+        fflush(stdout);
     }
 
     D(bug("Automation thread exiting\n"));

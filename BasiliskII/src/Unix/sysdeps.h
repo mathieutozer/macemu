@@ -21,8 +21,6 @@
 #ifndef SYSDEPS_H
 #define SYSDEPS_H
 
-#error "not this sysdeps"
-
 #ifndef __STDC__
 #error "Your compiler is not ANSI. Get a real one."
 #endif
