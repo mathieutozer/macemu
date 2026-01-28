@@ -58,6 +58,11 @@
 		7539E26F1F23B32A006B2DF2 /* timer_unix.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7539E2301F23B32A006B2DF2 /* timer_unix.cpp */; };
 		7539E2701F23B32A006B2DF2 /* tinyxml2.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7539E2311F23B32A006B2DF2 /* tinyxml2.cpp */; };
 		7539E2801F23C4CA006B2DF2 /* main_unix.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7539E27F1F23C4CA006B2DF2 /* main_unix.cpp */; };
+		A1B2C3D40000000000000001 /* automation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000002 /* automation.cpp */; };
+		SWIFT001000000000000001 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SWIFT001000000000000010 /* PreferencesView.swift */; };
+		SWIFT001000000000000002 /* DisplaySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = SWIFT001000000000000011 /* DisplaySettingsView.swift */; };
+		SWIFT001000000000000003 /* PreferencesManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = SWIFT001000000000000012 /* PreferencesManager.swift */; };
+		SWIFT001000000000000004 /* PreferencesWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = SWIFT001000000000000013 /* PreferencesWindowController.swift */; };
 		7539E2911F23C56F006B2DF2 /* prefs_editor_dummy.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7539E2881F23C56F006B2DF2 /* prefs_editor_dummy.cpp */; };
 		7539E2921F23C56F006B2DF2 /* scsi_dummy.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7539E2891F23C56F006B2DF2 /* scsi_dummy.cpp */; };
 		7539E2931F23C56F006B2DF2 /* serial_dummy.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7539E28A1F23C56F006B2DF2 /* serial_dummy.cpp */; };
@@ -262,6 +267,7 @@
 		7539E2351F23B32A006B2DF2 /* user_strings_unix.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = user_strings_unix.h; sourceTree = "<group>"; };
 		7539E27E1F23BEB4006B2DF2 /* config.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = config.h; sourceTree = "<group>"; };
 		7539E27F1F23C4CA006B2DF2 /* main_unix.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = main_unix.cpp; sourceTree = "<group>"; };
+		A1B2C3D40000000000000002 /* automation.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = automation.cpp; sourceTree = "<group>"; };
 		7539E2861F23C56F006B2DF2 /* ether_dummy.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ether_dummy.cpp; sourceTree = "<group>"; };
 		7539E2881F23C56F006B2DF2 /* prefs_editor_dummy.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = prefs_editor_dummy.cpp; sourceTree = "<group>"; };
 		7539E2891F23C56F006B2DF2 /* scsi_dummy.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = scsi_dummy.cpp; sourceTree = "<group>"; };
@@ -271,6 +277,11 @@
 		7539E2AA1F23CDB7006B2DF2 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		756C1B321F252FC100620917 /* utils_macosx.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = utils_macosx.h; sourceTree = "<group>"; };
 		756C1B331F252FC100620917 /* utils_macosx.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = utils_macosx.mm; sourceTree = "<group>"; };
+		SWIFT001000000000000010 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
+		SWIFT001000000000000011 /* DisplaySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplaySettingsView.swift; sourceTree = "<group>"; };
+		SWIFT001000000000000012 /* PreferencesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesManager.swift; sourceTree = "<group>"; };
+		SWIFT001000000000000013 /* PreferencesWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesWindowController.swift; sourceTree = "<group>"; };
+		SWIFT001000000000000014 /* BasiliskII-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "BasiliskII-Bridging-Header.h"; sourceTree = "<group>"; };
 		756C1B381F25306A00620917 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		757A2BEF1F5AF9D6003EDB01 /* user_strings_unix.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = user_strings_unix.cpp; sourceTree = "<group>"; };
 		75CBCF741F5DB3AD00830063 /* video_sdl2.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = video_sdl2.cpp; sourceTree = "<group>"; };
@@ -522,8 +533,21 @@
 				756C1B321F252FC100620917 /* utils_macosx.h */,
 				756C1B331F252FC100620917 /* utils_macosx.mm */,
 				7539E02E1F23B25A006B2DF2 /* Versions.html */,
+				SWIFT001000000000000014 /* BasiliskII-Bridging-Header.h */,
+				SWIFT001000000000000020 /* Preferences */,
 			);
 			name = MacOSX;
+			sourceTree = "<group>";
+		};
+		SWIFT001000000000000020 /* Preferences */ = {
+			isa = PBXGroup;
+			children = (
+				SWIFT001000000000000010 /* PreferencesView.swift */,
+				SWIFT001000000000000011 /* DisplaySettingsView.swift */,
+				SWIFT001000000000000012 /* PreferencesManager.swift */,
+				SWIFT001000000000000013 /* PreferencesWindowController.swift */,
+			);
+			path = Preferences;
 			sourceTree = "<group>";
 		};
 		7539E0711F23B25A006B2DF2 /* SDL */ = {
@@ -651,6 +675,7 @@
 				7539E20B1F23B32A006B2DF2 /* ldscripts */,
 				7539E2171F23B32A006B2DF2 /* m4 */,
 				7539E27F1F23C4CA006B2DF2 /* main_unix.cpp */,
+				A1B2C3D40000000000000002 /* automation.cpp */,
 				7539E21E1F23B32A006B2DF2 /* Makefile.in */,
 				7539E21F1F23B32A006B2DF2 /* mkinstalldirs */,
 				7539E2231F23B32A006B2DF2 /* rpc.h */,
@@ -830,6 +855,10 @@
 				7539E1281F23B25A006B2DF2 /* sigsegv.cpp in Sources */,
 				753253341F5368370024025B /* cpustbl.cpp in Sources */,
 				756C1B341F252FC100620917 /* utils_macosx.mm in Sources */,
+				SWIFT001000000000000001 /* PreferencesView.swift in Sources */,
+				SWIFT001000000000000002 /* DisplaySettingsView.swift in Sources */,
+				SWIFT001000000000000003 /* PreferencesManager.swift in Sources */,
+				SWIFT001000000000000004 /* PreferencesWindowController.swift in Sources */,
 				E413D92620D260BC00E437D8 /* misc.c in Sources */,
 				753253321F5368370024025B /* cpuemu.cpp in Sources */,
 				7539E2701F23B32A006B2DF2 /* tinyxml2.cpp in Sources */,
@@ -839,6 +868,7 @@
 				75CBCF771F5DB65E00830063 /* video_sdl.cpp in Sources */,
 				7539E1901F23B25A006B2DF2 /* basilisk_glue.cpp in Sources */,
 				7539E2801F23C4CA006B2DF2 /* main_unix.cpp in Sources */,
+				A1B2C3D40000000000000001 /* automation.cpp in Sources */,
 				7539E1E11F23B25A006B2DF2 /* user_strings.cpp in Sources */,
 				75CBCF751F5DB3AD00830063 /* video_sdl2.cpp in Sources */,
 				752F27011F242BAF001032B4 /* prefs_sdl.cpp in Sources */,
@@ -962,10 +992,11 @@
 					../uae_cpu,
 					../UNIX,
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
 		};
@@ -1018,9 +1049,10 @@
 					../uae_cpu,
 					../UNIX,
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -1032,6 +1064,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "compiler-default";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = NO;
+				DEFINES_MODULE = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = NO;
@@ -1068,13 +1101,15 @@
 				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
 				INSTALL_PATH = "$(HOME)/Applications";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_CFLAGS = "";
 				PRECOMPS_INCLUDE_HEADERS_FROM_BUILT_PRODUCTS_DIR = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = net.cebix.basilisk;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "BasiliskII-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
 				USE_HEADERMAP = YES;
 				VALID_ARCHS = "x86_64 arm64";
 				WARNING_CFLAGS = "";
@@ -1089,6 +1124,7 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "compiler-default";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = NO;
+				DEFINES_MODULE = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = NO;
@@ -1128,12 +1164,15 @@
 				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
 				INSTALL_PATH = "$(HOME)/Applications";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				OTHER_CFLAGS = "";
 				PRECOMPS_INCLUDE_HEADERS_FROM_BUILT_PRODUCTS_DIR = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = net.cebix.basilisk;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "BasiliskII-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
 				USE_HEADERMAP = YES;
 				VALID_ARCHS = "x86_64 arm64";
 				WARNING_CFLAGS = "";

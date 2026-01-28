@@ -10,6 +10,14 @@
 #include <sys/param.h> /* for MAXPATHLEN */
 #include <unistd.h>
 
+/* Import Swift-generated header for preferences bridge */
+#if __has_include("BasiliskII-Swift.h")
+#import "BasiliskII-Swift.h"
+#define HAS_SWIFT_PREFS 1
+#else
+#define HAS_SWIFT_PREFS 0
+#endif
+
 /* For some reaon, Apple removed setAppleMenu from the headers in 10.4,
  but the method still is there and works. To avoid warnings, we declare
  it ourselves here. */
@@ -81,6 +89,16 @@ static NSString *getApplicationName(void)
 /* The main class of the application, the application's delegate */
 @implementation SDLMain
 
+/* Show the preferences window */
+- (void)showPreferences:(id)sender
+{
+#if HAS_SWIFT_PREFS
+    [[PreferencesBridge shared] showPreferencesWindow];
+#else
+    NSLog(@"Preferences not available (Swift support not compiled in)");
+#endif
+}
+
 /* Set the working directory to the .app's parent directory */
 - (void) setupWorkingDirectory:(BOOL)shouldChdir
 {
@@ -137,6 +155,11 @@ static void setApplicationMenu(void)
     /* Add menu items */
     title = [@"About " stringByAppendingString:appName];
     [appleMenu addItemWithTitle:title action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+
+    [appleMenu addItem:[NSMenuItem separatorItem]];
+
+    /* Settings menu item - Cmd+, */
+    [appleMenu addItemWithTitle:@"Settings..." action:@selector(showPreferences:) keyEquivalent:@","];
 
     [appleMenu addItem:[NSMenuItem separatorItem]];
 
