@@ -128,27 +128,34 @@ struct TestRunnerView: View {
     // MARK: - Test List
 
     private var testListView: some View {
-        List(selection: Binding(
-            get: { manager.selectedSuite?.id },
-            set: { id in
-                manager.selectedSuite = manager.suites.first { $0.id == id }
-            }
-        )) {
+        List {
             ForEach(manager.suites) { suite in
                 Section {
                     ForEach(suite.tests) { test in
-                        TestRowView(test: test, onRun: {
-                            manager.runTest(test)
-                        }, onReRecord: {
-                            // TODO: Re-record functionality
-                        })
+                        TestRowView(
+                            test: test,
+                            isSelected: manager.selectedTest?.id == test.id,
+                            onSelect: {
+                                manager.selectedTest = test
+                                manager.selectedSuite = suite
+                            },
+                            onRun: {
+                                manager.runTest(test)
+                            },
+                            onReRecord: {
+                                // TODO: Re-record functionality
+                            }
+                        )
                     }
                 } header: {
                     SuiteHeaderView(
                         suite: suite,
                         isSelected: manager.selectedSuite?.id == suite.id,
                         isRecording: manager.isRecording,
-                        onSelect: { manager.selectedSuite = suite },
+                        onSelect: {
+                            manager.selectedSuite = suite
+                            manager.selectedTest = nil
+                        },
                         onRun: { manager.runSuite(suite) }
                     )
                 }
@@ -178,6 +185,15 @@ struct TestRunnerView: View {
                     Text("\(manager.liveEvents.count) events")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                } else if let test = manager.selectedTest {
+                    Text(test.displayName)
+                        .font(.headline)
+                    Spacer()
+                    Button(action: { manager.runTest(test) }) {
+                        Label("Run", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 } else {
                     Text("Test Details")
                         .font(.headline)
@@ -192,6 +208,8 @@ struct TestRunnerView: View {
             // Content
             if manager.isRecording || !manager.liveEvents.isEmpty {
                 liveEventsView
+            } else if let test = manager.selectedTest {
+                selectedTestDetailsView(test: test)
             } else {
                 Spacer()
                 Text("Select a test to view details")
@@ -200,6 +218,49 @@ struct TestRunnerView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Selected Test Details
+
+    private func selectedTestDetailsView(test: Test) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Test info
+            Group {
+                HStack {
+                    Text("Suite:")
+                        .foregroundColor(.secondary)
+                    Text(test.suiteName.replacingOccurrences(of: "_", with: " ").capitalized)
+                }
+                HStack {
+                    Text("Status:")
+                        .foregroundColor(.secondary)
+                    Text(test.status.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .foregroundColor(statusColor(for: test.status))
+                }
+                if let lastRun = test.lastRun {
+                    HStack {
+                        Text("Last run:")
+                            .foregroundColor(.secondary)
+                        Text(lastRun, style: .relative)
+                    }
+                }
+            }
+            .font(.caption)
+
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func statusColor(for status: TestStatus) -> Color {
+        switch status {
+        case .passed: return .green
+        case .failed: return .red
+        case .running: return .orange
+        case .recording: return .red
+        case .notRun: return .secondary
+        }
     }
 
     // MARK: - Live Events View
@@ -465,6 +526,8 @@ struct SuiteHeaderView: View {
 
 struct TestRowView: View {
     let test: Test
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onRun: () -> Void
     let onReRecord: () -> Void
 
@@ -477,6 +540,7 @@ struct TestRowView: View {
             // Test name
             VStack(alignment: .leading) {
                 Text(test.displayName)
+                    .foregroundColor(isSelected ? .primary : .secondary)
                 if let diff = test.diffPercent, test.status == .failed {
                     Text("Diff: \(String(format: "%.1f", diff))%")
                         .font(.caption)
@@ -497,7 +561,14 @@ struct TestRowView: View {
             }
             .buttonStyle(.borderless)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+        .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+        .cornerRadius(4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
+        }
     }
 
     @ViewBuilder

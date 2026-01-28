@@ -70,6 +70,7 @@ class TestRunnerManager: ObservableObject {
     @Published var selectedApp: App?
     @Published var suites: [TestSuite] = []
     @Published var selectedSuite: TestSuite?
+    @Published var selectedTest: Test?
     @Published var isRecording = false
     @Published var recordingStatus = "Ready"
     @Published var currentRecordingEvents: Int = 0
