@@ -67,6 +67,11 @@
 #define DEBUG 0
 #include "debug.h"
 
+#if defined(__APPLE__) || defined(__linux__)
+#include "../Unix/automation.h"
+#define HAS_AUTOMATION 1
+#endif
+
 #define CODE_INVALID -1
 #define CODE_HOTKEY  -2
 
@@ -2184,22 +2189,38 @@ static void handle_events(void)
 			// Mouse button
 			case SDL_MOUSEBUTTONDOWN: {
 				unsigned int button = event.button.button;
+				int adb_button = -1;
 				if (button == SDL_BUTTON_LEFT)
-					ADBMouseDown(0);
+					adb_button = 0;
 				else if (button == SDL_BUTTON_RIGHT)
-					ADBMouseDown(1);
+					adb_button = 1;
 				else if (button == SDL_BUTTON_MIDDLE)
-					ADBMouseDown(2);
+					adb_button = 2;
+				if (adb_button >= 0) {
+					ADBMouseDown(adb_button);
+#ifdef HAS_AUTOMATION
+					if (AutomationIsRecording())
+						AutomationRecordMouseDown(adb_button, event.button.x, event.button.y);
+#endif
+				}
 				break;
 			}
 			case SDL_MOUSEBUTTONUP: {
 				unsigned int button = event.button.button;
+				int adb_button = -1;
 				if (button == SDL_BUTTON_LEFT)
-					ADBMouseUp(0);
+					adb_button = 0;
 				else if (button == SDL_BUTTON_RIGHT)
-					ADBMouseUp(1);
+					adb_button = 1;
 				else if (button == SDL_BUTTON_MIDDLE)
-					ADBMouseUp(2);
+					adb_button = 2;
+				if (adb_button >= 0) {
+					ADBMouseUp(adb_button);
+#ifdef HAS_AUTOMATION
+					if (AutomationIsRecording())
+						AutomationRecordMouseUp(adb_button, event.button.x, event.button.y);
+#endif
+				}
 				break;
 			}
 
@@ -2245,6 +2266,10 @@ static void handle_events(void)
 #else
 						ADBKeyDown(code);
 #endif
+#ifdef HAS_AUTOMATION
+						if (AutomationIsRecording())
+							AutomationRecordKeyDown(code);
+#endif
 						if (code == 0x36)
 							ctrl_down = true;
 #ifdef __APPLE__
@@ -2258,7 +2283,7 @@ static void handle_events(void)
 						if (code == 0x3a)
 							cmd_down = true;
 #endif
-						
+
 					} else {
 						if (code == 0x31)
 							drv->resume();	// Space wakes us up
@@ -2278,6 +2303,10 @@ static void handle_events(void)
 						ADBKeyUp(code);
 #else
 					ADBKeyUp(code);
+#endif
+#ifdef HAS_AUTOMATION
+					if (AutomationIsRecording())
+						AutomationRecordKeyUp(code);
 #endif
 					if (code == 0x36)
 						ctrl_down = false;

@@ -22,6 +22,8 @@
 #include <sys/un.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/time.h>
+#include <vector>
 
 #define DEBUG 1
 #include "debug.h"
@@ -33,6 +35,28 @@ static pthread_t automation_thread;
 static volatile bool automation_thread_running = false;
 static char socket_path[256];
 static void *automation_thread_func(void *arg);
+
+// Recording state
+struct RecordedEvent {
+    uint32_t timestamp_ms;  // milliseconds since recording started
+    int32_t event_type;     // RECORD_EVENT_*
+    int32_t param1;         // keycode or x
+    int32_t param2;         // 0 or y
+    int32_t param3;         // 0 or button
+};
+
+static bool recording_active = false;
+static uint64_t recording_start_ms = 0;
+static std::vector<RecordedEvent> recorded_events;
+static pthread_mutex_t recording_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int last_mouse_x = 0;
+static int last_mouse_y = 0;
+
+static uint64_t get_time_ms() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
 
 // External functions to access framebuffer (defined in video_sdl.cpp)
 extern uint8 *AutomationGetFrameBuffer(void);
@@ -109,6 +133,10 @@ static bool needs_shift[128] = {
 #define METHOD_CLICK          109
 #define METHOD_PING           110
 #define METHOD_WAIT_MS        111
+#define METHOD_START_RECORDING 112
+#define METHOD_STOP_RECORDING  113
+#define METHOD_GET_EVENTS      114
+#define METHOD_CLEAR_EVENTS    115
 
 // Protocol constants
 #define RPC_START    (-3000)
@@ -512,6 +540,91 @@ static bool handle_command(int sock) {
             break;
         }
 
+        case METHOD_START_RECORDING: {
+            int32_t end;
+            recv_int32(sock, &end);  // END
+
+            D(bug("Automation: start_recording\n"));
+            printf("START_RECORDING: Setting recording_active = true\n");
+            fflush(stdout);
+            pthread_mutex_lock(&recording_mutex);
+            recorded_events.clear();
+            recording_start_ms = get_time_ms();
+            recording_active = true;
+            pthread_mutex_unlock(&recording_mutex);
+
+            send_int32(sock, RPC_REPLY);
+            send_int32(sock, TYPE_INT32);
+            send_int32(sock, 1);  // success
+            send_int32(sock, RPC_END);
+            send_int32(sock, RPC_ACK);
+            break;
+        }
+
+        case METHOD_STOP_RECORDING: {
+            int32_t end;
+            recv_int32(sock, &end);  // END
+
+            D(bug("Automation: stop_recording\n"));
+            pthread_mutex_lock(&recording_mutex);
+            recording_active = false;
+            int32_t event_count = (int32_t)recorded_events.size();
+            pthread_mutex_unlock(&recording_mutex);
+
+            send_int32(sock, RPC_REPLY);
+            send_int32(sock, TYPE_INT32);
+            send_int32(sock, event_count);  // return number of recorded events
+            send_int32(sock, RPC_END);
+            send_int32(sock, RPC_ACK);
+            break;
+        }
+
+        case METHOD_GET_EVENTS: {
+            int32_t end;
+            recv_int32(sock, &end);  // END
+
+            D(bug("Automation: get_events\n"));
+            pthread_mutex_lock(&recording_mutex);
+
+            // Send array of events as: [count, event1_fields..., event2_fields..., ...]
+            // Each event: timestamp, type, param1, param2, param3 (5 int32s)
+            send_int32(sock, RPC_REPLY);
+            send_int32(sock, TYPE_INT32);
+            send_int32(sock, (int32_t)recorded_events.size());
+
+            for (size_t i = 0; i < recorded_events.size(); i++) {
+                const RecordedEvent &ev = recorded_events[i];
+                send_int32(sock, TYPE_UINT32);
+                send_uint32(sock, ev.timestamp_ms);
+                send_int32(sock, TYPE_INT32);
+                send_int32(sock, ev.event_type);
+                send_int32(sock, TYPE_INT32);
+                send_int32(sock, ev.param1);
+                send_int32(sock, TYPE_INT32);
+                send_int32(sock, ev.param2);
+                send_int32(sock, TYPE_INT32);
+                send_int32(sock, ev.param3);
+            }
+
+            pthread_mutex_unlock(&recording_mutex);
+            send_int32(sock, RPC_END);
+            send_int32(sock, RPC_ACK);
+            break;
+        }
+
+        case METHOD_CLEAR_EVENTS: {
+            int32_t end;
+            recv_int32(sock, &end);  // END
+
+            D(bug("Automation: clear_events\n"));
+            pthread_mutex_lock(&recording_mutex);
+            recorded_events.clear();
+            pthread_mutex_unlock(&recording_mutex);
+
+            send_empty_reply(sock);
+            break;
+        }
+
         default: {
             // Unknown command - skip to END and send empty reply
             int32_t val;
@@ -606,6 +719,90 @@ void AutomationPoll(int timeout_us)
 {
     // Polling is now handled by the automation thread
     // This function is kept for API compatibility but does nothing
+}
+
+// Recording functions - called from video_sdl2.cpp
+bool AutomationIsRecording(void)
+{
+    static int call_count = 0;
+    if (recording_active && (call_count++ % 100 == 0)) {
+        printf("AutomationIsRecording called, active=%d\n", recording_active);
+        fflush(stdout);
+    }
+    return recording_active;
+}
+
+void AutomationRecordKeyDown(int keycode)
+{
+    if (!recording_active) return;
+    pthread_mutex_lock(&recording_mutex);
+    RecordedEvent ev;
+    ev.timestamp_ms = (uint32_t)(get_time_ms() - recording_start_ms);
+    ev.event_type = RECORD_EVENT_KEY_DOWN;
+    ev.param1 = keycode;
+    ev.param2 = 0;
+    ev.param3 = 0;
+    recorded_events.push_back(ev);
+    printf("RECORD: key_down(%d) at %u ms (total: %zu)\n", keycode, ev.timestamp_ms, recorded_events.size());
+    fflush(stdout);
+    pthread_mutex_unlock(&recording_mutex);
+}
+
+void AutomationRecordKeyUp(int keycode)
+{
+    if (!recording_active) return;
+    pthread_mutex_lock(&recording_mutex);
+    RecordedEvent ev;
+    ev.timestamp_ms = (uint32_t)(get_time_ms() - recording_start_ms);
+    ev.event_type = RECORD_EVENT_KEY_UP;
+    ev.param1 = keycode;
+    ev.param2 = 0;
+    ev.param3 = 0;
+    recorded_events.push_back(ev);
+    printf("RECORD: key_up(%d) at %u ms (total: %zu)\n", keycode, ev.timestamp_ms, recorded_events.size());
+    fflush(stdout);
+    pthread_mutex_unlock(&recording_mutex);
+}
+
+void AutomationRecordMouseDown(int button, int x, int y)
+{
+    if (!recording_active) return;
+    pthread_mutex_lock(&recording_mutex);
+    RecordedEvent ev;
+    ev.timestamp_ms = (uint32_t)(get_time_ms() - recording_start_ms);
+    ev.event_type = RECORD_EVENT_MOUSE_DOWN;
+    ev.param1 = x;
+    ev.param2 = y;
+    ev.param3 = button;
+    recorded_events.push_back(ev);
+    printf("RECORD: mouse_down(%d) at (%d,%d) at %u ms (total: %zu)\n", button, x, y, ev.timestamp_ms, recorded_events.size());
+    fflush(stdout);
+    pthread_mutex_unlock(&recording_mutex);
+}
+
+void AutomationRecordMouseUp(int button, int x, int y)
+{
+    if (!recording_active) return;
+    pthread_mutex_lock(&recording_mutex);
+    RecordedEvent ev;
+    ev.timestamp_ms = (uint32_t)(get_time_ms() - recording_start_ms);
+    ev.event_type = RECORD_EVENT_MOUSE_UP;
+    ev.param1 = x;
+    ev.param2 = y;
+    ev.param3 = button;
+    recorded_events.push_back(ev);
+    printf("RECORD: mouse_up(%d) at (%d,%d) at %u ms (total: %zu)\n", button, x, y, ev.timestamp_ms, recorded_events.size());
+    fflush(stdout);
+    pthread_mutex_unlock(&recording_mutex);
+}
+
+void AutomationRecordMouseMove(int x, int y)
+{
+    // Store last mouse position for click recording
+    last_mouse_x = x;
+    last_mouse_y = y;
+    // Don't record every mouse move - too noisy
+    // Only record if explicitly requested or for drag operations
 }
 
 void AutomationExit(void)

@@ -29,6 +29,17 @@ METHOD_TYPE_TEXT = 108
 METHOD_CLICK = 109
 METHOD_PING = 110
 METHOD_WAIT_MS = 111
+METHOD_START_RECORDING = 112
+METHOD_STOP_RECORDING = 113
+METHOD_GET_EVENTS = 114
+METHOD_CLEAR_EVENTS = 115
+
+# Recorded event types
+RECORD_EVENT_KEY_DOWN = 1
+RECORD_EVENT_KEY_UP = 2
+RECORD_EVENT_MOUSE_DOWN = 3
+RECORD_EVENT_MOUSE_UP = 4
+RECORD_EVENT_MOUSE_MOVE = 5
 
 class BasiliskClient:
     def __init__(self, socket_name):
@@ -170,6 +181,50 @@ class BasiliskClient:
         if len(result) >= 5:
             return result[0], result[1], result[2], result[3], result[4]
         return None
+
+    def start_recording(self):
+        """Start recording user input events"""
+        self._send_call(METHOD_START_RECORDING)
+        result = self._recv_reply()
+        return result[0] if result else 0
+
+    def stop_recording(self):
+        """Stop recording, returns number of events recorded"""
+        self._send_call(METHOD_STOP_RECORDING)
+        result = self._recv_reply()
+        return result[0] if result else 0
+
+    def get_events(self):
+        """
+        Get recorded events.
+        Returns list of dicts with keys: timestamp_ms, event_type, param1, param2, param3
+        """
+        self._send_call(METHOD_GET_EVENTS)
+        result = self._recv_reply()
+        if not result:
+            return []
+
+        count = result[0]
+        events = []
+        idx = 1
+        for _ in range(count):
+            if idx + 4 >= len(result):
+                break
+            ev = {
+                'timestamp_ms': result[idx],
+                'event_type': result[idx + 1],
+                'param1': result[idx + 2],
+                'param2': result[idx + 3],
+                'param3': result[idx + 4],
+            }
+            events.append(ev)
+            idx += 5
+        return events
+
+    def clear_events(self):
+        """Clear recorded events"""
+        self._send_call(METHOD_CLEAR_EVENTS)
+        self._recv_reply()
 
 
 if __name__ == "__main__":

@@ -99,6 +99,16 @@ static NSString *getApplicationName(void)
 #endif
 }
 
+/* Show the test runner window */
+- (void)showTestRunner:(id)sender
+{
+#if HAS_SWIFT_PREFS
+    [[TestRunnerBridge shared] showTestRunnerWindow];
+#else
+    NSLog(@"Test Runner not available (Swift support not compiled in)");
+#endif
+}
+
 /* Set the working directory to the .app's parent directory */
 - (void) setupWorkingDirectory:(BOOL)shouldChdir
 {
@@ -160,6 +170,9 @@ static void setApplicationMenu(void)
 
     /* Settings menu item - Cmd+, */
     [appleMenu addItemWithTitle:@"Settings..." action:@selector(showPreferences:) keyEquivalent:@","];
+
+    /* Test Runner menu item - Cmd+T */
+    [appleMenu addItemWithTitle:@"Test Runner..." action:@selector(showTestRunner:) keyEquivalent:@"t"];
 
     [appleMenu addItem:[NSMenuItem separatorItem]];
 

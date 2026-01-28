@@ -28,6 +28,20 @@ enum {
     AUTOMATION_METHOD_CLICK,
     AUTOMATION_METHOD_WAIT_MS,
     AUTOMATION_METHOD_PING,
+    // Recording methods (112+)
+    AUTOMATION_METHOD_START_RECORDING,
+    AUTOMATION_METHOD_STOP_RECORDING,
+    AUTOMATION_METHOD_GET_EVENTS,
+    AUTOMATION_METHOD_CLEAR_EVENTS,
+};
+
+// Recorded event types
+enum {
+    RECORD_EVENT_KEY_DOWN = 1,
+    RECORD_EVENT_KEY_UP,
+    RECORD_EVENT_MOUSE_DOWN,
+    RECORD_EVENT_MOUSE_UP,
+    RECORD_EVENT_MOUSE_MOVE,
 };
 
 // Initialize automation server
@@ -45,5 +59,15 @@ extern void AutomationExit(void);
 
 // Check if automation is enabled
 extern bool AutomationEnabled(void);
+
+// Recording functions - called from video_sdl2.cpp to record user input
+extern void AutomationRecordKeyDown(int keycode);
+extern void AutomationRecordKeyUp(int keycode);
+extern void AutomationRecordMouseDown(int button, int x, int y);
+extern void AutomationRecordMouseUp(int button, int x, int y);
+extern void AutomationRecordMouseMove(int x, int y);
+
+// Check if recording is active (to avoid recording playback events)
+extern bool AutomationIsRecording(void);
 
 #endif /* AUTOMATION_H */
