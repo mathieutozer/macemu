@@ -33,6 +33,13 @@ enum {
 // Initialize automation server
 // socket_path: Unix domain socket path (e.g., "/tmp/basilisk_automation")
 // Returns true on success
+#ifdef USE_XCODE
+// Stub implementations for macOS Xcode build
+inline bool AutomationInit(const char *socket_path) { return false; }
+inline void AutomationPoll(int timeout_us) {}
+inline void AutomationExit(void) {}
+inline bool AutomationEnabled(void) { return false; }
+#else
 extern bool AutomationInit(const char *socket_path);
 
 // Poll for incoming automation commands
@@ -45,5 +52,6 @@ extern void AutomationExit(void);
 
 // Check if automation is enabled
 extern bool AutomationEnabled(void);
+#endif
 
 #endif /* AUTOMATION_H */

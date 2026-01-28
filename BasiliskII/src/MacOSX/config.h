@@ -448,7 +448,7 @@
 
 /* Define if we can ignore the fault (instruction skipping in SIGSEGV
    handler). */
-#define HAVE_SIGSEGV_SKIP_INSTRUCTION 1
+/* #undef HAVE_SIGSEGV_SKIP_INSTRUCTION */
 
 /* Define to 1 if you have the `sinhl' function. */
 #define HAVE_SINHL 1

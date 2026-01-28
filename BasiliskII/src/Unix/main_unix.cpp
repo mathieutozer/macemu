@@ -393,7 +393,12 @@ static void usage(const char *prg_name)
 	exit(0);
 }
 
+#ifdef USE_XCODE
+// macOS Xcode build uses SDLMain.m which provides main() and calls SDL_main()
+int SDL_main(int argc, char **argv)
+#else
 int main(int argc, char **argv)
+#endif
 {
 #if defined(ENABLE_GTK) && !defined(GDK_WINDOWING_QUARTZ) && !defined(GDK_WINDOWING_WAYLAND)
 	XInitThreads();
