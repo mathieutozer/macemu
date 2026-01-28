@@ -727,7 +727,8 @@ static SDL_Surface * init_sdl_video(int width, int height, int bpp, Uint32 flags
 		}
 	}
 	
-	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, PrefsFindBool("scale_nearest") ? "nearest" : "linear");
+	// Default to nearest-neighbor scaling for crisp retro pixels
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, PrefsFindBool("scale_linear") ? "linear" : "nearest");
 	
 	/*
 	// Always use a resize-able window.  This helps allow SDL to manage
