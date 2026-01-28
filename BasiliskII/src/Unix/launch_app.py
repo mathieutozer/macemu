@@ -59,6 +59,54 @@ def send_keystroke(client, keycode, command=False, option=False, shift=False):
 
     client.wait_ms(100)
 
+def get_screen_hash(client):
+    """Get a hash of the current framebuffer."""
+    try:
+        result = client.screenshot()
+        if result and result[4]:
+            import hashlib
+            return hashlib.md5(result[4]).hexdigest()
+    except:
+        pass
+    return None
+
+def dismiss_startup_dialogs(client, max_attempts=3):
+    """
+    Press Return to dismiss any startup dialogs (like improper shutdown warning).
+    Detects if a dialog was dismissed by checking if the screen changed.
+    """
+    dismissed_count = 0
+
+    for attempt in range(max_attempts):
+        # Get screen hash before
+        before_hash = get_screen_hash(client)
+
+        # Press Return to dismiss dialogs
+        print(f"  Checking for startup dialogs (attempt {attempt + 1})...")
+        client.key_down(KEY_RETURN)
+        time.sleep(0.05)
+        client.key_up(KEY_RETURN)
+        client.wait_ms(300)
+
+        # Get screen hash after
+        after_hash = get_screen_hash(client)
+
+        # If screen changed, we probably dismissed a dialog
+        if before_hash and after_hash and before_hash != after_hash:
+            dismissed_count += 1
+            print(f"  Dismissed a dialog!")
+            time.sleep(0.3)
+        else:
+            # No change, no more dialogs
+            break
+
+    if dismissed_count > 0:
+        print(f"  Dismissed {dismissed_count} dialog(s)")
+    else:
+        print("  No dialogs detected")
+
+    return dismissed_count
+
 def force_quit_app(client):
     """Send Cmd+Q to quit current app"""
     print("  Sending Cmd+Q to quit current app...")
@@ -127,6 +175,10 @@ def main():
     print("Connected to BasiliskII!")
 
     try:
+        # Step 0: Dismiss any startup dialogs (like "improper shutdown" warning)
+        print("\nStep 0: Checking for startup dialogs...")
+        dismiss_startup_dialogs(client)
+
         # Step 1: Quit current app
         if not args.no_quit:
             print("\nStep 1: Quitting current app...")
@@ -135,16 +187,25 @@ def main():
             force_quit_app(client)
             client.wait_ms(300)
 
-        # Step 2: Wait for Finder to become active after quit
-        print("\nStep 2: Waiting for Finder to become active...")
-        client.wait_ms(500)
+        # Step 2: Close any open window that might capture keystrokes
+        print("\nStep 2: Closing any open window (Cmd+W)...")
+        send_keystroke(client, KEY_W, command=True)
+        client.wait_ms(300)
+        # Do it twice in case there are multiple windows
+        send_keystroke(client, KEY_W, command=True)
+        client.wait_ms(300)
 
-        # Step 3: Navigate to shared folder
-        print(f"\nStep 3: Navigating to '{args.folder}' folder...")
+        # Step 3: Click on desktop to ensure Finder is active with no selection
+        print("\nStep 3: Clicking desktop to activate Finder...")
+        activate_finder(client)
+        client.wait_ms(300)
+
+        # Step 4: Navigate to shared folder
+        print(f"\nStep 4: Navigating to '{args.folder}' folder...")
         select_and_open(client, args.folder)
 
-        # Step 4: Select and launch the app
-        print(f"\nStep 4: Launching '{args.app_name}'...")
+        # Step 5: Select and launch the app
+        print(f"\nStep 5: Launching '{args.app_name}'...")
         select_and_open(client, args.app_name)
 
         print("\nDone! App should be launching.")
