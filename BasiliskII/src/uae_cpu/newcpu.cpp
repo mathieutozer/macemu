@@ -29,6 +29,7 @@
 #include "cpu_emulation.h"
 #include "main.h"
 #include "emul_op.h"
+#include "gdbstub.h"
 
 extern int intlev(void);	// From baisilisk_glue.cpp
 
@@ -1369,12 +1370,20 @@ int m68k_do_specialties (void)
 void m68k_do_execute (void)
 {
 	for (;;) {
+		GdbStubMaybeAccept();
+		if (GdbStubCheckAsyncBreak())
+			GdbStubEnterStop(2);
+		uaecptr pc = m68k_getpc();
+		if (GdbStubCheckBreakpoint(pc))
+			GdbStubEnterStop(5);
 		uae_u32 opcode = GET_OPCODE;
 #if FLIGHT_RECORDER
 		m68k_record_step(m68k_getpc());
 #endif
 		(*cpufunctbl[opcode])(opcode);
 		cpu_check_ticks();
+		if (GdbStubConsumeSingleStep())
+			GdbStubEnterStop(5);
 		if (SPCFLAGS_TEST(SPCFLAG_ALL_BUT_EXEC_RETURN)) {
 			if (m68k_do_specialties())
 				return;
@@ -1387,6 +1396,7 @@ void m68k_execute (void)
 #if USE_JIT
 	++m68k_execute_depth;
 #endif
+	GdbStubOnCpuStart();
 	for (;;) {
 		if (quit_program)
 			break;

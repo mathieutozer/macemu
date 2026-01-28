@@ -84,6 +84,7 @@ using std::string;
 #include "video.h"
 #include "emul_op.h"
 #include "prefs.h"
+#include "gdbstub.h"
 #include "prefs_editor.h"
 #include "macos_util.h"
 #include "user_strings.h"
@@ -383,7 +384,9 @@ static void usage(const char *prg_name)
 		"  --break ADDRESS\n    set ROM breakpoint in hexadecimal\n"
 		"  --loadbreak FILE\n    load breakpoint from FILE\n"
 		"  --rominfo\n    dump ROM information\n"
-		"  --switch SWITCH_PATH\n    vde_switch address\n", prg_name
+		"  --switch SWITCH_PATH\n    vde_switch address\n"
+		"  --gdb-port PORT\n    listen for GDB remote on localhost:PORT\n"
+		"  --gdb-wait\n    wait for GDB client and break at start\n", prg_name
 	);
 	LoadPrefs(NULL); // read the prefs file so PrefsPrintUsage() will print the correct default values
 	PrefsPrintUsage();
@@ -397,6 +400,10 @@ int main(int argc, char **argv)
 #endif
 	const char *vmdir = NULL;
 	char str[256];
+
+	uint16 gdb_port = 0;
+	bool gdb_wait = false;
+	bool gdb_break = false;
 
 	// Initialize variables
 	RAMBaseHost = NULL;
@@ -461,6 +468,16 @@ int main(int argc, char **argv)
 				usage(argv[0]);
 			}
 			vde_sock = argv[i];
+			argv[i] = NULL;
+		} else if (strcmp(argv[i], "--gdb-port") == 0) {
+			argv[i++] = NULL;
+			if (i < argc) {
+				gdb_port = static_cast<uint16>(strtoul(argv[i], NULL, 10));
+				argv[i] = NULL;
+			}
+		} else if (strcmp(argv[i], "--gdb-wait") == 0) {
+			gdb_wait = true;
+			gdb_break = true;
 			argv[i] = NULL;
 		}
 		
@@ -814,6 +831,17 @@ int main(int argc, char **argv)
 		}
 	}
 
+	// Initialize GDB remote stub if requested
+	if (gdb_port != 0) {
+		if (!GdbStubInit(gdb_port, gdb_wait, gdb_break)) {
+			fprintf(stderr, "Warning: Failed to initialize GDB stub on port %u\n", gdb_port);
+		} else {
+			printf("GDB stub listening on 127.0.0.1:%u\n", gdb_port);
+			if (gdb_wait)
+				printf("Waiting for GDB client...\n");
+		}
+	}
+
 #ifndef USE_CPU_EMUL_SERVICES
 #if defined(HAVE_PTHREADS)
 
@@ -947,6 +975,9 @@ void QuitEmulator(void)
 
 	// Stop automation server
 	AutomationExit();
+
+	// Stop GDB stub
+	GdbStubShutdown();
 
 	// Deinitialize everything
 	ExitAll();
