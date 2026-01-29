@@ -99,11 +99,19 @@ struct TestRunnerView: View {
 
             // Run all button
             if manager.selectedApp != nil && !manager.suites.isEmpty {
-                Button(action: { manager.runAllTests() }) {
-                    Label("Run All", systemImage: "play.fill")
+                if manager.isPlaying {
+                    Button(action: { manager.stopPlayback() }) {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                } else {
+                    Button(action: { manager.runAllTests() }) {
+                        Label("Run All", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(manager.isRecording)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(manager.isRecording)
             }
         }
     }
@@ -135,12 +143,16 @@ struct TestRunnerView: View {
                         TestRowView(
                             test: test,
                             isSelected: manager.selectedTest?.id == test.id,
+                            isPlaying: manager.playingTest?.id == test.id,
                             onSelect: {
                                 manager.selectedTest = test
                                 manager.selectedSuite = suite
                             },
                             onRun: {
                                 manager.runTest(test)
+                            },
+                            onStop: {
+                                manager.stopPlayback()
                             },
                             onReRecord: {
                                 // TODO: Re-record functionality
@@ -152,11 +164,13 @@ struct TestRunnerView: View {
                         suite: suite,
                         isSelected: manager.selectedSuite?.id == suite.id,
                         isRecording: manager.isRecording,
+                        isPlaying: manager.isPlaying,
                         onSelect: {
                             manager.selectedSuite = suite
                             manager.selectedTest = nil
                         },
-                        onRun: { manager.runSuite(suite) }
+                        onRun: { manager.runSuite(suite) },
+                        onStop: { manager.stopPlayback() }
                     )
                 }
             }
@@ -189,11 +203,21 @@ struct TestRunnerView: View {
                     Text(test.displayName)
                         .font(.headline)
                     Spacer()
-                    Button(action: { manager.runTest(test) }) {
-                        Label("Run", systemImage: "play.fill")
+                    if manager.playingTest?.id == test.id {
+                        Button(action: { manager.stopPlayback() }) {
+                            Label("Stop", systemImage: "stop.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .controlSize(.small)
+                    } else {
+                        Button(action: { manager.runTest(test) }) {
+                            Label("Run", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(manager.isPlaying)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
                 } else {
                     Text("Test Details")
                         .font(.headline)
@@ -484,8 +508,10 @@ struct SuiteHeaderView: View {
     let suite: TestSuite
     let isSelected: Bool
     let isRecording: Bool
+    let isPlaying: Bool
     let onSelect: () -> Void
     let onRun: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         HStack {
@@ -506,11 +532,19 @@ struct SuiteHeaderView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            Button(action: onRun) {
-                Image(systemName: "play.fill")
+            if isPlaying {
+                Button(action: onStop) {
+                    Image(systemName: "stop.fill")
+                }
+                .buttonStyle(.borderless)
+                .tint(.red)
+            } else {
+                Button(action: onRun) {
+                    Image(systemName: "play.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(isRecording)
             }
-            .buttonStyle(.borderless)
-            .disabled(isRecording)
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
@@ -527,8 +561,10 @@ struct SuiteHeaderView: View {
 struct TestRowView: View {
     let test: Test
     let isSelected: Bool
+    let isPlaying: Bool
     let onSelect: () -> Void
     let onRun: () -> Void
+    let onStop: () -> Void
     let onReRecord: () -> Void
 
     var body: some View {
@@ -551,15 +587,24 @@ struct TestRowView: View {
             Spacer()
 
             // Action buttons
-            Button(action: onRun) {
-                Image(systemName: "play.fill")
+            if isPlaying {
+                Button(action: onStop) {
+                    Image(systemName: "stop.fill")
+                }
+                .buttonStyle(.borderless)
+                .tint(.red)
+            } else {
+                Button(action: onRun) {
+                    Image(systemName: "play.fill")
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
 
             Button(action: onReRecord) {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
+            .disabled(isPlaying)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)

@@ -76,12 +76,17 @@ class TestRunnerManager: ObservableObject {
     @Published var currentRecordingEvents: Int = 0
     @Published var screenSizeWarning: String?
     @Published var liveEvents: [RecordedEventInfo] = []
+    @Published var isPlaying = false
+    @Published var playingTest: Test?
 
     // Automation socket
     private let automationSocket = "basilisk_auto"
 
     // Timer for polling events during recording
     private var eventPollingTimer: Timer?
+
+    // Process for playback (so we can stop it)
+    private var playbackProcess: Process?
 
     // MARK: - Initialization
 
@@ -390,19 +395,44 @@ class TestRunnerManager: ObservableObject {
     func runTest(_ test: Test) {
         checkScreenSize()
         guard screenSizeWarning == nil else { return }
+        guard !isPlaying else { return }  // Don't start if already playing
 
         updateTestStatus(test, status: .running)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.isPlaying = true
+            self?.playingTest = test
+        }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = self?.runTestPlayback(test)
 
             DispatchQueue.main.async {
+                self?.isPlaying = false
+                self?.playingTest = nil
+
                 if let result = result {
                     self?.updateTestStatus(test, status: result.passed ? .passed : .failed, diffPercent: result.diffPercent)
                 } else {
                     self?.updateTestStatus(test, status: .failed)
                 }
             }
+        }
+    }
+
+    func stopPlayback() {
+        guard isPlaying, let process = playbackProcess else { return }
+
+        print("TestRunnerManager: Stopping playback...")
+        process.terminate()
+        playbackProcess = nil
+
+        DispatchQueue.main.async { [weak self] in
+            if let test = self?.playingTest {
+                self?.updateTestStatus(test, status: .notRun)
+            }
+            self?.isPlaying = false
+            self?.playingTest = nil
         }
     }
 
@@ -611,13 +641,51 @@ class TestRunnerManager: ObservableObject {
         print(f"{'PASSED' if success else 'FAILED'}|{diff}")
         """
 
-        if let output = runPythonScript(script) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-c", script]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        // Store process so stopPlayback() can terminate it
+        playbackProcess = process
+
+        // Read output in background to avoid pipe buffer deadlock
+        var outputData = Data()
+        let readQueue = DispatchQueue(label: "playback-output-reader")
+        let readGroup = DispatchGroup()
+
+        readGroup.enter()
+        readQueue.async {
+            outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+            readGroup.leave()
+        }
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            readGroup.wait()
+
+            playbackProcess = nil
+
+            // Check if terminated (exit code 15 = SIGTERM)
+            if process.terminationStatus == 15 || process.terminationReason == .uncaughtSignal {
+                print("TestRunnerManager: Playback was stopped")
+                return nil
+            }
+
+            let output = String(data: outputData, encoding: .utf8) ?? ""
             let parts = output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "|")
             if parts.count == 2 {
                 let passed = parts[0] == "PASSED"
                 let diff = Double(parts[1]) ?? 0
                 return (passed, diff)
             }
+        } catch {
+            print("TestRunnerManager: Playback error: \(error)")
+            playbackProcess = nil
         }
         return nil
     }
