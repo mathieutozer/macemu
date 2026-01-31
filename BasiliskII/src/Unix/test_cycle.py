@@ -312,39 +312,27 @@ def get_screenshot_hash():
         pass
     return None
 
-def wait_and_monitor(duration: int, check_interval: float = 0.5, detect_hang: bool = True):
+def wait_and_monitor(duration: int, check_interval: float = 0.5):
     """
     Wait for specified duration while monitoring BasiliskII.
-    Returns (still_running, crash_log_path, hung)
+    Returns (still_running, crash_log_path)
+
+    Note: We don't detect "hangs" based on static screens because a GUI app
+    waiting for user input will naturally have a static screen. A static
+    screen is normal behavior, not a hang.
     """
     start_time = time.time()
-    last_hash = None
-    same_hash_count = 0
-    hung = False
 
     while time.time() - start_time < duration:
         if not is_basilisk_running():
             # Process died - check for crash log
             time.sleep(0.5)  # Give crash reporter time
             crash_log = get_recent_crash_log()
-            return False, crash_log, False
-
-        # Check for hang by comparing screenshot hashes
-        if detect_hang and time.time() - start_time > 2:  # Start checking after 2 seconds
-            current_hash = get_screenshot_hash()
-            if current_hash:
-                if current_hash == last_hash:
-                    same_hash_count += 1
-                    # If screen unchanged for 3+ checks (1.5+ seconds), likely hung
-                    if same_hash_count >= 3:
-                        hung = True
-                else:
-                    same_hash_count = 0
-                last_hash = current_hash
+            return False, crash_log
 
         time.sleep(check_interval)
 
-    return True, None, hung
+    return True, None
 
 def run_test_cycle(
     build_dir: str = None,
@@ -418,7 +406,7 @@ def run_test_cycle(
 
         # Step 4: Wait and monitor
         result["stage"] = "wait"
-        still_running, crash_log, hung = wait_and_monitor(wait_time)
+        still_running, crash_log = wait_and_monitor(wait_time)
 
         if not still_running:
             result["process_status"] = "crashed"
@@ -426,14 +414,6 @@ def run_test_cycle(
             result["error"] = "Emulator crashed"
             # Try to get a screenshot anyway (might show crash dialog)
             result["screenshot_path"] = take_screenshot("crash")
-            return result
-
-        if hung:
-            result["process_status"] = "hung"
-            result["error"] = "Emulator appears frozen (screen unchanged)"
-            result["screenshot_path"] = take_screenshot(app_name or "hung")
-            if kill_after:
-                kill_basilisk()
             return result
 
         # Step 5: Take screenshot
