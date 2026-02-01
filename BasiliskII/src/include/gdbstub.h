@@ -6,19 +6,7 @@
 extern "C" {
 #endif
 
-#ifdef USE_XCODE
-// Stub implementations for macOS Xcode build
-inline bool GdbStubInit(uint16 port, bool wait_for_client, bool break_on_start) { return false; }
-inline void GdbStubShutdown(void) {}
-inline bool GdbStubIsEnabled(void) { return false; }
-inline bool GdbStubIsConnected(void) { return false; }
-inline void GdbStubOnCpuStart(void) {}
-inline void GdbStubMaybeAccept(void) {}
-inline bool GdbStubCheckAsyncBreak(void) { return false; }
-inline bool GdbStubCheckBreakpoint(uaecptr pc) { return false; }
-inline bool GdbStubConsumeSingleStep(void) { return false; }
-inline void GdbStubEnterStop(int signal) {}
-#else
+// GDB stub declarations - implementations in gdbstub.cpp
 bool GdbStubInit(uint16 port, bool wait_for_client, bool break_on_start);
 void GdbStubShutdown(void);
 
@@ -42,7 +30,6 @@ bool GdbStubConsumeSingleStep(void);
 
 // Enter the debugger stop loop (blocks until continue/step).
 void GdbStubEnterStop(int signal);
-#endif
 
 #ifdef __cplusplus
 }

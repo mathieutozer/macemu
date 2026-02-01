@@ -725,6 +725,9 @@
 /* Define to enable SDL video graphics support */
 #define USE_SDL_VIDEO 1
 
+/* Define to enable SDL2 specific features */
+#define ENABLE_SDL2 1
+
 /* Enable extensions on AIX 3, Interix.  */
 #ifndef _ALL_SOURCE
 # define _ALL_SOURCE 1
