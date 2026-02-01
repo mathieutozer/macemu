@@ -64,8 +64,14 @@ extern void flush_icache_range(uint8 *start, uint32 size); // from compemu_suppo
 #define DEBUG 0
 #include "debug.h"
 
+#include "gdbstub.h"
 
 #include "main_macosx.h"		// To bridge between main() and misc. classes
+
+// GDB remote debugging
+static uint16 gdb_port = 0;
+static bool gdb_wait = false;
+static bool gdb_break = false;
 
 
 // Constants
@@ -204,7 +210,9 @@ static void usage(const char *prg_name)
 		"\nUnix options:\n"
 		"  --config FILE\n    read/write configuration from/to FILE\n"
 		"  --break ADDRESS\n    set ROM breakpoint\n"
-		"  --rominfo\n    dump ROM information\n", prg_name
+		"  --rominfo\n    dump ROM information\n"
+		"  --gdb-port PORT\n    listen for GDB remote on localhost:PORT\n"
+		"  --gdb-wait\n    wait for GDB client and break at start\n", prg_name
 	);
 	LoadPrefs(NULL); // read the prefs file so PrefsPrintUsage() will print the correct default values
 	PrefsPrintUsage();
@@ -248,6 +256,16 @@ int main(int argc, char **argv)
 		} else if (strcmp(argv[i], "--rominfo") == 0) {
 			argv[i] = NULL;
 			PrintROMInfo = true;
+		} else if (strcmp(argv[i], "--gdb-port") == 0) {
+			argv[i++] = NULL;
+			if (i < argc) {
+				gdb_port = static_cast<uint16>(strtoul(argv[i], NULL, 10));
+				argv[i] = NULL;
+			}
+		} else if (strcmp(argv[i], "--gdb-wait") == 0) {
+			gdb_wait = true;
+			gdb_break = true;
+			argv[i] = NULL;
 		}
 	}
 
@@ -314,6 +332,14 @@ bool InitEmulator (void)
 	const char *vmdir = NULL;
 	char str[256];
 
+	// Initialize GDB stub if requested
+	if (gdb_port > 0) {
+		if (!GdbStubInit(gdb_port, gdb_wait, gdb_break)) {
+			fprintf(stderr, "Failed to initialize GDB stub on port %d\n", gdb_port);
+		} else {
+			printf("GDB stub listening on port %d%s\n", gdb_port, gdb_wait ? " (waiting for connection)" : "");
+		}
+	}
 
 	// Install the handler for SIGSEGV
 	if (!sigsegv_install_handler(sigsegv_handler)) {

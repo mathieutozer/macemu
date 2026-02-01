@@ -783,7 +783,23 @@ void Exception(int nr, uaecptr oldpc)
 
 	// Break into GDB on crash exceptions (but not A-traps or F-traps which are normal)
 	if (nr >= 2 && nr <= 8) {
-		write_log("68k Exception %d (%s) at PC=%08x\n", nr, exception_name(nr), currpc);
+		fprintf(stderr, "\n============================================================\n");
+		fprintf(stderr, "  68k CRASH: %s (Exception %d)\n", exception_name(nr), nr);
+		fprintf(stderr, "============================================================\n");
+		fprintf(stderr, "PC:  %08x\n", currpc);
+		fprintf(stderr, "Registers:\n");
+		fprintf(stderr, "  D0=%08x D1=%08x D2=%08x D3=%08x\n",
+			m68k_dreg(regs, 0), m68k_dreg(regs, 1), m68k_dreg(regs, 2), m68k_dreg(regs, 3));
+		fprintf(stderr, "  D4=%08x D5=%08x D6=%08x D7=%08x\n",
+			m68k_dreg(regs, 4), m68k_dreg(regs, 5), m68k_dreg(regs, 6), m68k_dreg(regs, 7));
+		fprintf(stderr, "  A0=%08x A1=%08x A2=%08x A3=%08x\n",
+			m68k_areg(regs, 0), m68k_areg(regs, 1), m68k_areg(regs, 2), m68k_areg(regs, 3));
+		fprintf(stderr, "  A4=%08x A5=%08x A6=%08x A7=%08x\n",
+			m68k_areg(regs, 4), m68k_areg(regs, 5), m68k_areg(regs, 6), m68k_areg(regs, 7));
+		fprintf(stderr, "  SR=%04x\n", regs.sr);
+		fprintf(stderr, "============================================================\n\n");
+		fflush(stderr);
+
 		if (GdbStubIsConnected()) {
 			GdbStubEnterStop(exception_to_signal(nr));
 		}
