@@ -740,9 +740,55 @@ void MakeFromSR (void)
 		SPCFLAGS_CLEAR( SPCFLAG_TRACE );
 }
 
+// Map 68k exception numbers to Unix signals for GDB
+static int exception_to_signal(int nr)
+{
+	switch (nr) {
+		case 2:  // Bus Error
+		case 3:  // Address Error
+			return 7;  // SIGBUS
+		case 4:  // Illegal Instruction
+		case 8:  // Privilege Violation
+			return 4;  // SIGILL
+		case 5:  // Zero Divide
+		case 6:  // CHK Instruction
+		case 7:  // TRAPV Instruction
+			return 8;  // SIGFPE
+		default:
+			return 5;  // SIGTRAP
+	}
+}
+
+// Exception names for logging
+static const char* exception_name(int nr)
+{
+	switch (nr) {
+		case 2:  return "Bus Error";
+		case 3:  return "Address Error";
+		case 4:  return "Illegal Instruction";
+		case 5:  return "Zero Divide";
+		case 6:  return "CHK Instruction";
+		case 7:  return "TRAPV Instruction";
+		case 8:  return "Privilege Violation";
+		case 9:  return "Trace";
+		case 10: return "Line 1010 (A-Trap)";
+		case 11: return "Line 1111 (F-Trap)";
+		default: return "Unknown";
+	}
+}
+
 void Exception(int nr, uaecptr oldpc)
 {
 	uae_u32 currpc = m68k_getpc ();
+
+	// Break into GDB on crash exceptions (but not A-traps or F-traps which are normal)
+	if (nr >= 2 && nr <= 8) {
+		write_log("68k Exception %d (%s) at PC=%08x\n", nr, exception_name(nr), currpc);
+		if (GdbStubIsConnected()) {
+			GdbStubEnterStop(exception_to_signal(nr));
+		}
+	}
+
 	MakeSR();
 	if (!regs.s) {
 		regs.usp = m68k_areg(regs, 7);
