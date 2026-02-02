@@ -38,6 +38,10 @@ void GdbStubEnterStop(int signal);
 void GdbStubSetCodeBase(uaecptr base);
 uaecptr GdbStubGetCodeBase(void);
 
+// Track CODE segment runtime addresses for multi-segment apps.
+#define GDB_MAX_SEGMENTS 16
+void GdbStubAddSegment(uint16 seg_num, uaecptr runtime_addr);
+
 #ifdef __cplusplus
 }
 #endif

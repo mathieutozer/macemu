@@ -1456,6 +1456,39 @@ void m68k_do_execute (void)
 		if (GdbStubCheckBreakpoint(pc))
 			GdbStubEnterStop(5);
 		uae_u32 opcode = GET_OPCODE;
+		// Check for _LoadSeg trap (0xA9F0) to track CODE segment loading
+		// Only track after our app's debugger trap has fired (GdbStubGetCodeBase() != 0)
+		if ((opcode & 0xFFFF) == 0xA9F0 && GdbStubIsEnabled() && GdbStubGetCodeBase() != 0) {
+			// LoadSeg is about to be called
+			// The segment number is on the stack, pushed by jump table entry
+			uaecptr sp = m68k_areg(regs, 7);
+			uae_u16 seg_num = get_word(sp);
+
+			fprintf(stderr, "LoadSeg trap: seg_num=%d from PC=0x%08x\n", seg_num, pc);
+			fflush(stderr);
+
+			// Only track reasonable segment numbers (2-15 for app CODE segments)
+			// Segment 1 is already known from the debugger trap
+			if (seg_num >= 2 && seg_num < GDB_MAX_SEGMENTS) {
+				// Execute the LoadSeg trap first
+				(*cpufunctbl[opcode])(opcode);
+				cpu_check_ticks();
+
+				// After LoadSeg, A0 contains the segment's entry point
+				uaecptr seg_entry = m68k_areg(regs, 0);
+				fprintf(stderr, "LoadSeg: segment %d loaded, entry at 0x%08x\n",
+					seg_num, seg_entry);
+				fflush(stderr);
+				GdbStubAddSegment(seg_num, seg_entry);
+
+				// Skip the normal instruction execution since we already did it
+				if (SPCFLAGS_TEST(SPCFLAG_ALL_BUT_EXEC_RETURN)) {
+					if (m68k_do_specialties())
+						return;
+				}
+				continue;
+			}
+		}
 		// Check for _Debugger trap (0xA9FF) in main loop
 		if ((opcode & 0xFFFF) == 0xA9FF && GdbStubIsEnabled()) {
 			fprintf(stderr, "*** Debugger trap (0xA9FF) at PC=%08x ***\n", pc);
@@ -1464,6 +1497,9 @@ void m68k_do_execute (void)
 			// Set the CODE base address - PC is at the entry trampoline (symbol offset 0)
 			// So PC = runtime base address of the CODE resource
 			GdbStubSetCodeBase(pc);
+
+			// Register segment 1 at this address
+			GdbStubAddSegment(1, pc);
 
 			// Skip past the 2-byte trap instruction so we don't loop
 			m68k_incpc(2);

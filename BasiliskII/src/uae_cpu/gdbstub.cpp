@@ -31,6 +31,12 @@ static bool gdb_in_stop = false;
 static std::vector<uaecptr> gdb_breakpoints;
 static uaecptr gdb_code_base = 0;  // Base address where app CODE is loaded
 
+// Segment tracking for multi-segment apps
+// Simple array: index is segment number, value is runtime base address
+// CODE segments are typically numbered 1-8, use 0 for segment 1
+static uaecptr gdb_segment_bases[GDB_MAX_SEGMENTS];
+static bool gdb_segment_loaded[GDB_MAX_SEGMENTS];
+
 static const int kSigTrap = 5;
 static const int kSigInt = 2;
 
@@ -672,6 +678,21 @@ uaecptr GdbStubGetCodeBase(void)
 	return gdb_code_base;
 #else
 	return 0;
+#endif
+}
+
+void GdbStubAddSegment(uint16 seg_num, uaecptr runtime_addr)
+{
+#if B2_HAVE_GDBSTUB
+	if (seg_num < GDB_MAX_SEGMENTS) {
+		gdb_segment_bases[seg_num] = runtime_addr;
+		gdb_segment_loaded[seg_num] = true;
+		fprintf(stderr, "GDB stub: CODE segment %d loaded at 0x%08x\n", seg_num, runtime_addr);
+		fflush(stderr);
+	}
+#else
+	(void)seg_num;
+	(void)runtime_addr;
 #endif
 }
 
