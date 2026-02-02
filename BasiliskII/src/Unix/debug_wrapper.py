@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""
+Debug wrapper for Retro68 + BasiliskII + GDB DAP.
+
+This script:
+1. Builds the app (if build_dir provided)
+2. Starts BasiliskII with GDB stub enabled
+3. Launches the app in the emulator
+4. Waits for GDB port to be ready
+5. Exec's GDB in DAP mode to connect
+
+Usage:
+    debug_wrapper.py --app-name NAME --symbol-file PATH --basilisk PATH --launch-script PATH [--build-dir PATH]
+"""
+
+import argparse
+import os
+import socket
+import subprocess
+import sys
+import time
+
+GDB_PORT = 9999
+GDB_PATH = "/opt/homebrew/bin/gdb"
+AUTOMATION_SOCKET = "basilisk_auto"
+
+
+def wait_for_port(port, host='localhost', timeout=30):
+    """Wait for a port to become available."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            if result == 0:
+                return True
+        except:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def kill_existing_basilisk():
+    """Kill any running BasiliskII process."""
+    try:
+        subprocess.run(['pkill', '-x', 'BasiliskII'], capture_output=True)
+        time.sleep(1)
+    except:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Debug wrapper for Retro68 + BasiliskII')
+    parser.add_argument('--app-name', required=True, help='Name of the app to debug')
+    parser.add_argument('--symbol-file', required=True, help='Path to .code.bin.gdb symbol file')
+    parser.add_argument('--basilisk', required=True, help='Path to BasiliskII.app')
+    parser.add_argument('--launch-script', required=True, help='Path to launch_app.py')
+    parser.add_argument('--build-dir', help='Build directory (will run make if provided)')
+    parser.add_argument('--gdb-port', type=int, default=GDB_PORT, help='GDB port')
+    args = parser.parse_args()
+
+    # Build if requested
+    if args.build_dir:
+        print(f"Building in {args.build_dir}...", file=sys.stderr)
+        result = subprocess.run(['make'], cwd=args.build_dir, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Build failed:\n{result.stderr}", file=sys.stderr)
+            sys.exit(1)
+        print("Build successful", file=sys.stderr)
+
+    # Kill existing BasiliskII
+    print("Stopping any existing BasiliskII...", file=sys.stderr)
+    kill_existing_basilisk()
+
+    # Start BasiliskII with GDB stub
+    basilisk_bin = os.path.join(args.basilisk, "Contents/MacOS/BasiliskII")
+    stderr_file = "/tmp/basilisk_stderr.txt"
+
+    print(f"Starting BasiliskII with GDB port {args.gdb_port}...", file=sys.stderr)
+    with open(stderr_file, 'w') as stderr_out:
+        basilisk_proc = subprocess.Popen(
+            [basilisk_bin, '--automation', AUTOMATION_SOCKET, '--gdb-port', str(args.gdb_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_out
+        )
+
+    # Wait for BasiliskII to start
+    time.sleep(5)
+
+    # Launch the app
+    print(f"Launching {args.app_name} in emulator...", file=sys.stderr)
+    result = subprocess.run(
+        ['python3', args.launch_script, args.app_name, '--socket', AUTOMATION_SOCKET, '--folder', 'Unix'],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"Failed to launch app: {result.stderr}", file=sys.stderr)
+
+    # Wait for GDB port to be ready
+    print(f"Waiting for GDB port {args.gdb_port}...", file=sys.stderr)
+    if not wait_for_port(args.gdb_port, timeout=10):
+        print(f"GDB port {args.gdb_port} not available", file=sys.stderr)
+        # Continue anyway - GDB will fail to connect but show an error
+
+    print("Starting GDB DAP...", file=sys.stderr)
+
+    # Exec GDB in DAP mode - this replaces the current process
+    os.execv(GDB_PATH, [
+        GDB_PATH,
+        '--interpreter=dap',
+        '-iex', 'set architecture m68k:68020',
+        '-iex', f'set remotetimeout 30'
+    ])
+
+
+if __name__ == '__main__':
+    main()
