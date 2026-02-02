@@ -19,6 +19,9 @@ void GdbStubOnCpuStart(void);
 // Non-blocking accept for new clients.
 void GdbStubMaybeAccept(void);
 
+// Returns true if a new client just connected (one-shot).
+bool GdbStubNewConnection(void);
+
 // Returns true if a CTRL-C (0x03) break was received.
 bool GdbStubCheckAsyncBreak(void);
 
@@ -30,6 +33,10 @@ bool GdbStubConsumeSingleStep(void);
 
 // Enter the debugger stop loop (blocks until continue/step).
 void GdbStubEnterStop(int signal);
+
+// Set/get the CODE resource base address for symbol offset calculation.
+void GdbStubSetCodeBase(uaecptr base);
+uaecptr GdbStubGetCodeBase(void);
 
 #ifdef __cplusplus
 }

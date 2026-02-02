@@ -29,6 +29,7 @@ static bool gdb_no_ack = false;
 static bool gdb_single_step = false;
 static bool gdb_in_stop = false;
 static std::vector<uaecptr> gdb_breakpoints;
+static uaecptr gdb_code_base = 0;  // Base address where app CODE is loaded
 
 static const int kSigTrap = 5;
 static const int kSigInt = 2;
@@ -400,19 +401,36 @@ static bool handle_breakpoint(const std::string &payload, bool set)
 	if (comma1 == std::string::npos) return send_packet("E01");
 	size_t comma2 = payload.find(',', comma1 + 1);
 	uaecptr addr = static_cast<uaecptr>(strtoul(payload.substr(comma1 + 1, comma2 - comma1 - 1).c_str(), NULL, 16));
+
+	// Apply code base offset only for low symbol addresses (< 1MB)
+	// High addresses (> 1MB) are already runtime addresses, don't add offset
+	uaecptr runtime_addr;
+	if (addr < 0x100000) {
+		// Low address - assume it's a symbol address, add base offset
+		runtime_addr = addr + gdb_code_base;
+		fprintf(stderr, "GDB breakpoint %s: symbol=0x%08x -> runtime=0x%08x (base=0x%08x)\n",
+			set ? "SET" : "REMOVE", addr, runtime_addr, gdb_code_base);
+	} else {
+		// High address - already a runtime address, use as-is
+		runtime_addr = addr;
+		fprintf(stderr, "GDB breakpoint %s: raw runtime=0x%08x (no offset applied)\n",
+			set ? "SET" : "REMOVE", runtime_addr);
+	}
+	fflush(stderr);
+
 	if (set) {
 		for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
-			if (gdb_breakpoints[i] == addr) return send_packet("OK");
+			if (gdb_breakpoints[i] == runtime_addr) return send_packet("OK");
 		}
-		gdb_breakpoints.push_back(addr);
+		gdb_breakpoints.push_back(runtime_addr);
+		fprintf(stderr, "GDB breakpoints now: %zu\n", gdb_breakpoints.size());
+		fflush(stderr);
 		return send_packet("OK");
 	}
-	for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
-		if (gdb_breakpoints[i] == addr) {
-			gdb_breakpoints.erase(gdb_breakpoints.begin() + i);
-			break;
-		}
-	}
+	// Don't actually remove breakpoints - we want them to persist after GDB disconnects
+	// so we can reconnect when they hit. Just acknowledge the request.
+	fprintf(stderr, "GDB breakpoint remove IGNORED (persisting for reconnect)\n");
+	fflush(stderr);
 	return send_packet("OK");
 }
 
@@ -637,6 +655,26 @@ bool GdbStubIsConnected(void)
 #endif
 }
 
+void GdbStubSetCodeBase(uaecptr base)
+{
+#if B2_HAVE_GDBSTUB
+	gdb_code_base = base;
+	fprintf(stderr, "GDB stub: CODE base address set to 0x%08x\n", base);
+	fflush(stderr);
+#else
+	(void)base;
+#endif
+}
+
+uaecptr GdbStubGetCodeBase(void)
+{
+#if B2_HAVE_GDBSTUB
+	return gdb_code_base;
+#else
+	return 0;
+#endif
+}
+
 void GdbStubOnCpuStart(void)
 {
 #if B2_HAVE_GDBSTUB
@@ -652,12 +690,28 @@ void GdbStubOnCpuStart(void)
 #endif
 }
 
+static bool gdb_new_connection = false;
+
 void GdbStubMaybeAccept(void)
 {
 #if B2_HAVE_GDBSTUB
 	if (!gdb_enabled) return;
-	try_accept();
+	if (try_accept()) {
+		// New client connected - set flag to trigger stop
+		gdb_new_connection = true;
+	}
 #endif
+}
+
+bool GdbStubNewConnection(void)
+{
+#if B2_HAVE_GDBSTUB
+	if (gdb_new_connection) {
+		gdb_new_connection = false;
+		return true;
+	}
+#endif
+	return false;
 }
 
 bool GdbStubCheckAsyncBreak(void)
@@ -684,12 +738,31 @@ bool GdbStubCheckAsyncBreak(void)
 #endif
 }
 
+static uaecptr last_logged_pc = 0;
+static int pc_log_counter = 0;
+
 bool GdbStubCheckBreakpoint(uaecptr pc)
 {
 #if B2_HAVE_GDBSTUB
-	if (!gdb_enabled || gdb_client_fd < 0) return false;
+	// Check breakpoints even if GDB is not connected - we'll wait for reconnect
+	if (!gdb_enabled) return false;
+
+	// Log PC range periodically to help debug address issues
+	if (gdb_breakpoints.size() > 0 && ++pc_log_counter >= 1000000) {
+		pc_log_counter = 0;
+		if (pc != last_logged_pc) {
+			fprintf(stderr, "PC sample: 0x%08x (breakpoint at 0x%08x)\n", pc, gdb_breakpoints[0]);
+			fflush(stderr);
+			last_logged_pc = pc;
+		}
+	}
+
 	for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
-		if (gdb_breakpoints[i] == pc) return true;
+		if (gdb_breakpoints[i] == pc) {
+			fprintf(stderr, "*** BREAKPOINT HIT at PC=0x%08x ***\n", pc);
+			fflush(stderr);
+			return true;
+		}
 	}
 	return false;
 #else
@@ -715,13 +788,14 @@ void GdbStubEnterStop(int signal)
 #if B2_HAVE_GDBSTUB
 	if (!gdb_enabled) return;
 	if (gdb_client_fd < 0) {
-		if (gdb_wait_for_client) {
-			while (!try_accept()) {
-				usleep(10000);
-			}
-		} else {
-			return;
+		// Always wait for GDB to connect when hitting a breakpoint
+		fprintf(stderr, "*** Breakpoint hit, waiting for GDB to connect... ***\n");
+		fflush(stderr);
+		while (!try_accept()) {
+			usleep(10000);
 		}
+		fprintf(stderr, "*** GDB connected ***\n");
+		fflush(stderr);
 	}
 	if (signal == 0) signal = kSigTrap;
 	if (signal != kSigTrap && signal != kSigInt) signal = kSigTrap;

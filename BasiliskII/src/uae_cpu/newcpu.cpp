@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "sysdeps.h"
 
@@ -1311,6 +1312,20 @@ void REGPARAM2 op_illg (uae_u32 opcode)
 	uaecptr pc = m68k_getpc ();
 
 	if ((opcode & 0xF000) == 0xA000) {
+		// Check for _Debugger trap (0xA9FF) - break into GDB
+		if (opcode == 0xA9FF && GdbStubIsEnabled()) {
+			fprintf(stderr, "Debugger trap at PC=%08x - waiting for GDB to connect...\n", pc);
+			fflush(stderr);
+			// Wait for GDB client if not connected
+			while (!GdbStubIsConnected()) {
+				GdbStubMaybeAccept();
+				usleep(10000);
+			}
+			fprintf(stderr, "GDB connected, entering stop mode\n");
+			fflush(stderr);
+			GdbStubEnterStop(5);  // SIGTRAP
+			return;
+		}
 		Exception(0xA,0);
 		return;
 	}
@@ -1433,12 +1448,37 @@ void m68k_do_execute (void)
 {
 	for (;;) {
 		GdbStubMaybeAccept();
+		if (GdbStubNewConnection())
+			GdbStubEnterStop(5);  // Stop when debugger connects
 		if (GdbStubCheckAsyncBreak())
 			GdbStubEnterStop(2);
 		uaecptr pc = m68k_getpc();
 		if (GdbStubCheckBreakpoint(pc))
 			GdbStubEnterStop(5);
 		uae_u32 opcode = GET_OPCODE;
+		// Check for _Debugger trap (0xA9FF) in main loop
+		if ((opcode & 0xFFFF) == 0xA9FF && GdbStubIsEnabled()) {
+			fprintf(stderr, "*** Debugger trap (0xA9FF) at PC=%08x ***\n", pc);
+			fflush(stderr);
+
+			// Set the CODE base address - PC is at the entry trampoline (symbol offset 0)
+			// So PC = runtime base address of the CODE resource
+			GdbStubSetCodeBase(pc);
+
+			// Skip past the 2-byte trap instruction so we don't loop
+			m68k_incpc(2);
+
+			fprintf(stderr, "*** Waiting for GDB to connect... ***\n");
+			fflush(stderr);
+			while (!GdbStubIsConnected()) {
+				GdbStubMaybeAccept();
+				usleep(10000);
+			}
+			fprintf(stderr, "*** GDB connected, entering debugger ***\n");
+			fflush(stderr);
+			GdbStubEnterStop(5);
+			continue;  // Re-fetch opcode after debugger
+		}
 #if FLIGHT_RECORDER
 		m68k_record_step(m68k_getpc());
 #endif
