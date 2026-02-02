@@ -46,6 +46,9 @@ def get_symbol_addresses(symbol_file):
 
 def resolve_address(symbol_file, relative_addr):
     """Resolve a relative address to file:line using addr2line."""
+    func_name = None
+    location = None
+
     try:
         result = subprocess.run(
             [ADDR2LINE, '-e', symbol_file, '-f', '-C', f'0x{relative_addr:x}'],
@@ -53,12 +56,57 @@ def resolve_address(symbol_file, relative_addr):
         )
         lines = result.stdout.strip().split('\n')
         if len(lines) >= 2:
-            func_name = lines[0]
-            location = lines[1]
-            if func_name != '??' and ':' in location:
-                return func_name, location
+            func_name = lines[0] if lines[0] != '??' else None
+            location = lines[1] if lines[1] not in ['??:0', '??:?'] else None
     except Exception as e:
         print(f"Warning: addr2line failed: {e}", file=sys.stderr)
+
+    return func_name, location
+
+
+def find_function_in_source(func_name, search_dir):
+    """Search for a function definition in source files."""
+    if not func_name or func_name == '??':
+        return None, None
+
+    # Clean up C++ mangled names
+    clean_name = func_name.replace('()', '').strip()
+
+    # Search patterns for function definition
+    patterns = [
+        f"void {clean_name}",
+        f"int {clean_name}",
+        f"bool {clean_name}",
+        f"{clean_name}()",  # Function call/definition
+    ]
+
+    # Directories to exclude from search (build artifacts)
+    exclude_patterns = [
+        '--exclude-dir=CMakeFiles',
+        '--exclude-dir=build',
+        '--exclude-dir=build-release',
+        '--exclude-dir=.cmake',
+    ]
+
+    try:
+        for pattern in patterns:
+            result = subprocess.run(
+                ['grep', '-rn', '--include=*.cpp', '--include=*.c'] + exclude_patterns + [pattern, search_dir],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.stdout:
+                # Parse first match: "filename:line:content"
+                first_line = result.stdout.strip().split('\n')[0]
+                if ':' in first_line:
+                    parts = first_line.split(':')
+                    if len(parts) >= 2:
+                        filepath = parts[0]
+                        line_num = parts[1]
+                        if line_num.isdigit():
+                            return filepath, int(line_num)
+    except Exception as e:
+        print(f"Warning: grep search failed: {e}", file=sys.stderr)
+
     return None, None
 
 
@@ -137,6 +185,31 @@ def main():
     # Resolve to file:line
     func_name, location = resolve_address(args.symbol_file, relative_pc)
 
+    # If addr2line didn't give us file:line, try searching source files
+    file_path = None
+    line_num = 0
+    if location and ':' in location and not location.startswith('??'):
+        parts = location.split(':')
+        file_path = parts[0]
+        line_num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+
+    if not file_path and func_name:
+        # Try to find the function in source files
+        # Look in the directory containing the symbol file (likely build dir)
+        # and its parent (likely the app source dir)
+        search_dirs = [
+            os.path.dirname(args.symbol_file),  # build dir
+            os.path.dirname(os.path.dirname(args.symbol_file)),  # app dir
+        ]
+        for search_dir in search_dirs:
+            if os.path.isdir(search_dir):
+                found_file, found_line = find_function_in_source(func_name, search_dir)
+                if found_file:
+                    file_path = found_file
+                    line_num = found_line
+                    location = f"{file_path}:{line_num}"
+                    break
+
     if args.json:
         import json
         result = {
@@ -144,12 +217,10 @@ def main():
             "relative_pc": f"0x{relative_pc:x}",
             "code_base": f"0x{code_base:x}",
             "function": func_name,
-            "location": location
+            "location": location,
+            "file": file_path,
+            "line": line_num
         }
-        if location and ':' in location:
-            parts = location.split(':')
-            result["file"] = parts[0]
-            result["line"] = int(parts[1]) if parts[1].isdigit() else 0
         print(json.dumps(result))
     else:
         print(f"PC: 0x{pc:08x}")
