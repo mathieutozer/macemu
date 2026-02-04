@@ -1459,35 +1459,25 @@ void m68k_do_execute (void)
 		// Check for _LoadSeg trap (0xA9F0) to track CODE segment loading
 		// Only track after our app's debugger trap has fired (GdbStubGetCodeBase() != 0)
 		if ((opcode & 0xFFFF) == 0xA9F0 && GdbStubIsEnabled() && GdbStubGetCodeBase() != 0) {
-			// LoadSeg is about to be called
-			// The segment number is on the stack, pushed by jump table entry
-			uaecptr sp = m68k_areg(regs, 7);
-			uae_u16 seg_num = get_word(sp);
-
-			fprintf(stderr, "LoadSeg trap: seg_num=%d from PC=0x%08x\n", seg_num, pc);
+			fprintf(stderr, "LoadSeg trap at PC=0x%08x\n", pc);
 			fflush(stderr);
 
-			// Only track reasonable segment numbers (2-15 for app CODE segments)
-			// Segment 1 is already known from the debugger trap
-			if (seg_num >= 2 && seg_num < GDB_MAX_SEGMENTS) {
-				// Execute the LoadSeg trap first
-				(*cpufunctbl[opcode])(opcode);
-				cpu_check_ticks();
+			// Execute the LoadSeg trap
+			(*cpufunctbl[opcode])(opcode);
+			cpu_check_ticks();
 
-				// After LoadSeg, A0 contains the segment's entry point
-				uaecptr seg_entry = m68k_areg(regs, 0);
-				fprintf(stderr, "LoadSeg: segment %d loaded, entry at 0x%08x\n",
-					seg_num, seg_entry);
-				fflush(stderr);
-				GdbStubAddSegment(seg_num, seg_entry);
+			// After LoadSeg completes, rescan the jump table to find newly loaded segments
+			// This is more reliable than trying to parse the segment number from the stack
+			fprintf(stderr, "LoadSeg complete, rescanning JT for new segments\n");
+			fflush(stderr);
+			GdbStubRescanJumpTable();
 
-				// Skip the normal instruction execution since we already did it
-				if (SPCFLAGS_TEST(SPCFLAG_ALL_BUT_EXEC_RETURN)) {
-					if (m68k_do_specialties())
-						return;
-				}
-				continue;
+			// Skip the normal instruction execution since we already did it
+			if (SPCFLAGS_TEST(SPCFLAG_ALL_BUT_EXEC_RETURN)) {
+				if (m68k_do_specialties())
+					return;
 			}
+			continue;
 		}
 		// Check for _Debugger trap (0xA9FF) in main loop
 		if ((opcode & 0xFFFF) == 0xA9FF && GdbStubIsEnabled()) {
@@ -1500,6 +1490,38 @@ void m68k_do_execute (void)
 
 			// Register segment 1 at this address
 			GdbStubAddSegment(1, pc);
+
+			// Scan the jump table to find loaded and unloaded segments
+			// The jump table is above A5 (application globals)
+			// Structure: seg_num(2) + opcode(2) + addr/offset(4) = 8 bytes per entry
+			// opcode is 4EF9 (JMP) for loaded, A9F0 (LoadSeg) for unloaded
+			uaecptr a5 = m68k_areg(regs, 5);
+			fprintf(stderr, "Scanning jump table at A5=0x%08x\n", a5);
+			fflush(stderr);
+
+			// Store A5 for later JT rescans
+			GdbStubSetA5(a5);
+
+			// Scan jump table entries (start at offset 0x20 based on observation)
+			for (int offset = 0x20; offset < 0x200; offset += 8) {
+				uaecptr entry = a5 + offset;
+				uae_u16 seg_num = get_word(entry);
+				uae_u16 opcode = get_word(entry + 2);
+				uaecptr addr_or_offset = get_long(entry + 4);
+
+				// Skip invalid entries
+				if (seg_num == 0 && opcode == 0) continue;
+				if (seg_num == 0 || seg_num > 15) continue;
+
+				if (opcode == 0x4EF9) {  // JMP - loaded segment
+					fprintf(stderr, "JT: seg %d LOADED at 0x%08x\n", seg_num, addr_or_offset);
+					GdbStubAddSegment(seg_num, addr_or_offset);
+				} else if (opcode == 0xA9F0) {  // LoadSeg - unloaded segment
+					fprintf(stderr, "JT: seg %d UNLOADED (offset 0x%04x)\n",
+						seg_num, addr_or_offset);
+				}
+			}
+			fflush(stderr);
 
 			// Skip past the 2-byte trap instruction so we don't loop
 			m68k_incpc(2);

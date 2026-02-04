@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from basilisk_client import BasiliskClient
 
 # Configuration
-BASILISK_APP = "/Users/tozer/code/macemu/BasiliskII/BasiliskII.app"
+BASILISK_APP = "/Users/mathieutozer/code/macemu/BasiliskII/BasiliskII.app"
 AUTOMATION_SOCKET = "basilisk_auto"
 LAUNCH_SCRIPT = Path(__file__).parent / "launch_app.py"
 SCREENSHOT_DIR = Path("/tmp/basilisk_screenshots")
@@ -130,16 +130,20 @@ def dismiss_startup_dialog(max_attempts=3):
         print(f"Warning: Could not dismiss dialog: {e}", file=sys.stderr)
         return dismissed_count
 
-def launch_basilisk():
-    """Launch BasiliskII with automation socket."""
+def launch_basilisk(gdb_segments_file=None):
+    """Launch BasiliskII with automation socket and optional GDB support."""
     if is_basilisk_running():
         # Still try to dismiss any dialogs
         dismiss_startup_dialog()
         return True, "Already running"
 
     try:
+        args = ["open", "-a", BASILISK_APP, "--args", "--automation", AUTOMATION_SOCKET,
+                "--gdb-port", "2345"]
+        if gdb_segments_file:
+            args.extend(["--gdb-segments", gdb_segments_file])
         subprocess.Popen(
-            ["open", "-a", BASILISK_APP, "--args", "--automation", AUTOMATION_SOCKET],
+            args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -353,7 +357,8 @@ def run_test_cycle(
     skip_build: bool = False,
     skip_launch: bool = False,
     kill_after: bool = True,
-    ensure_emulator: bool = True
+    ensure_emulator: bool = True,
+    gdb_segments_file: str = None
 ):
     """
     Run a complete test cycle.
@@ -395,7 +400,7 @@ def run_test_cycle(
         if ensure_emulator:
             result["stage"] = "emulator"
             if not is_basilisk_running():
-                launched, msg = launch_basilisk()
+                launched, msg = launch_basilisk(gdb_segments_file)
                 if not launched:
                     result["error"] = f"Failed to launch emulator: {msg}"
                     return result
@@ -471,6 +476,7 @@ def main():
     parser.add_argument("--screenshot-only", action="store_true", help="Just take a screenshot of current state")
     parser.add_argument("--kill", action="store_true", help="Just kill the emulator and exit")
     parser.add_argument("--status", action="store_true", help="Just check emulator status")
+    parser.add_argument("--gdb-segments", help="Path to .segments file for GDB debugging")
 
     args = parser.parse_args()
 
@@ -498,7 +504,8 @@ def main():
         skip_build=args.skip_build,
         skip_launch=args.skip_launch,
         kill_after=not args.no_kill,
-        ensure_emulator=not args.no_emulator
+        ensure_emulator=not args.no_emulator,
+        gdb_segments_file=args.gdb_segments
     )
 
     print(json.dumps(result, indent=2))

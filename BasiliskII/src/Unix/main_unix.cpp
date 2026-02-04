@@ -409,6 +409,7 @@ int main(int argc, char **argv)
 	uint16 gdb_port = 0;
 	bool gdb_wait = false;
 	bool gdb_break = false;
+	char gdb_segments_file[512] = "";
 
 	// Initialize variables
 	RAMBaseHost = NULL;
@@ -484,8 +485,15 @@ int main(int argc, char **argv)
 			gdb_wait = true;
 			gdb_break = true;
 			argv[i] = NULL;
+		} else if (strcmp(argv[i], "--gdb-segments") == 0) {
+			argv[i++] = NULL;
+			if (i < argc) {
+				strncpy(gdb_segments_file, argv[i], sizeof(gdb_segments_file) - 1);
+				gdb_segments_file[sizeof(gdb_segments_file) - 1] = '\0';
+				argv[i] = NULL;
+			}
 		}
-		
+
 #if __MACOSX__
 		// Mac OS X likes to pass in various options of its own, when launching an app.
 		// Attempt to ignore these.
@@ -844,6 +852,9 @@ int main(int argc, char **argv)
 			printf("GDB stub listening on 127.0.0.1:%u\n", gdb_port);
 			if (gdb_wait)
 				printf("Waiting for GDB client...\n");
+			if (gdb_segments_file[0] != '\0') {
+				GdbStubSetSegmentsFile(gdb_segments_file);
+			}
 		}
 	}
 
