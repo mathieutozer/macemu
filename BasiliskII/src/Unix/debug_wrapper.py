@@ -78,10 +78,26 @@ def main():
     basilisk_bin = os.path.join(args.basilisk, "Contents/MacOS/BasiliskII")
     stderr_file = "/tmp/basilisk_stderr.txt"
 
+    # Find the segments file for VMA → runtime address translation
+    segments_file = None
+    if args.build_dir:
+        segments_file = os.path.join(args.build_dir, args.app_name + ".segments")
+        if not os.path.exists(segments_file):
+            # Try alternate naming
+            segments_file = os.path.join(args.build_dir, args.app_name + ".code.bin.segments")
+        if not os.path.exists(segments_file):
+            print(f"Warning: segments file not found, breakpoints may not work correctly", file=sys.stderr)
+            segments_file = None
+
     print(f"Starting BasiliskII with GDB port {args.gdb_port}...", file=sys.stderr)
+    basilisk_args = [basilisk_bin, '--automation', AUTOMATION_SOCKET, '--gdb-port', str(args.gdb_port)]
+    if segments_file:
+        basilisk_args.extend(['--gdb-segments', segments_file])
+        print(f"Using segments file: {segments_file}", file=sys.stderr)
+
     with open(stderr_file, 'w') as stderr_out:
         basilisk_proc = subprocess.Popen(
-            [basilisk_bin, '--automation', AUTOMATION_SOCKET, '--gdb-port', str(args.gdb_port)],
+            basilisk_args,
             stdout=subprocess.DEVNULL,
             stderr=stderr_out
         )
@@ -106,12 +122,29 @@ def main():
 
     print("Starting GDB DAP...", file=sys.stderr)
 
+    # Get the source directory (parent of build dir, or same as symbol file dir's parent)
+    source_dir = os.path.dirname(os.path.dirname(args.symbol_file))
+
+    print(f"Source directory: {source_dir}", file=sys.stderr)
+    print(f"Symbol file: {args.symbol_file}", file=sys.stderr)
+
+    # Create a GDB init script to load symbols before DAP starts
+    gdb_init = "/tmp/gdb_init.gdb"
+    with open(gdb_init, 'w') as f:
+        f.write(f"set architecture m68k:68020\n")
+        f.write(f"set remotetimeout 30\n")
+        f.write(f"directory {source_dir}\n")
+        # Load symbols - note: can trigger DWARF warnings but symbols still load
+        f.write(f"symbol-file {args.symbol_file}\n")
+
+    print(f"GDB init script: {gdb_init}", file=sys.stderr)
+
     # Exec GDB in DAP mode - this replaces the current process
+    # Use -x to run init script after GDB starts but before DAP
     os.execv(GDB_PATH, [
         GDB_PATH,
         '--interpreter=dap',
-        '-iex', 'set architecture m68k:68020',
-        '-iex', f'set remotetimeout 30'
+        '-x', gdb_init,
     ])
 
 
