@@ -46,6 +46,9 @@ void GdbStubAddSegment(uint16 seg_num, uaecptr runtime_addr);
 void GdbStubSetA5(uaecptr a5);
 void GdbStubRescanJumpTable(void);
 
+// Returns true if there are VMA breakpoints waiting for segment resolution.
+bool GdbStubHasPendingBreakpoints(void);
+
 // Set path to .segments file for multi-segment address translation
 void GdbStubSetSegmentsFile(const char *path);
 

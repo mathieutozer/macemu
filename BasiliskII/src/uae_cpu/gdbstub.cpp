@@ -28,6 +28,9 @@ static bool gdb_break_on_start = false;
 static bool gdb_no_ack = false;
 static bool gdb_single_step = false;
 static bool gdb_in_stop = false;
+static bool gdb_skip_next_bp = false;  // Skip one BP check after c/s at a breakpoint
+static bool gdb_breakpoints_armed = false;  // Don't resolve/check breakpoints until armed by adapter
+static int gdb_resolve_countdown = 50000000;
 static std::vector<uaecptr> gdb_breakpoints;        // Runtime addresses for immediate checking
 static std::vector<uaecptr> gdb_breakpoint_vmas;    // Original VMAs for recalculation
 static uaecptr gdb_code_base = 0;  // Base address where app CODE is loaded
@@ -195,6 +198,7 @@ static void close_client(void)
 	gdb_no_ack = false;
 	gdb_single_step = false;
 	gdb_in_stop = false;
+	gdb_skip_next_bp = false;
 }
 
 static bool try_accept(void)
@@ -540,11 +544,17 @@ static void find_segment2_from_jsr(void)
 // Translate a symbol VMA to runtime address
 static uaecptr translate_symbol_to_runtime(uaecptr symbol_vma)
 {
+	fprintf(stderr, "    [TRANSLATE] Input VMA: 0x%08x\n", symbol_vma);
 	load_segments_file();
 
 	int seg = find_segment_for_vma(symbol_vma);
+	fprintf(stderr, "    [TRANSLATE] Segment search: seg=%d\n", seg);
+
 	if (seg == 0) {
 		// Not in any known segment, use old behavior
+		fprintf(stderr, "    [TRANSLATE] No segment found! Fallback: 0x%08x + 0x%08x = 0x%08x\n",
+			symbol_vma, gdb_code_base, symbol_vma + gdb_code_base);
+		fflush(stderr);
 		return symbol_vma + gdb_code_base;
 	}
 
@@ -553,34 +563,118 @@ static uaecptr translate_symbol_to_runtime(uaecptr symbol_vma)
 		// Calculate offset within segment
 		uaecptr offset = symbol_vma - gdb_segment_vma[seg].vma_start;
 		uaecptr runtime = gdb_segment_bases[seg] + offset;
-		fprintf(stderr, "GDB: symbol 0x%08x -> seg %d offset 0x%x -> runtime 0x%08x\n",
-			symbol_vma, seg, offset, runtime);
+		fprintf(stderr, "    [TRANSLATE] Seg %d LOADED: base=0x%08x, VMA_start=0x%08x, offset=0x%x -> runtime=0x%08x\n",
+			seg, gdb_segment_bases[seg], gdb_segment_vma[seg].vma_start, offset, runtime);
 		fflush(stderr);
 		return runtime;
 	}
 
 	// Segment not loaded yet - return 0 to indicate translation not possible
 	// The breakpoint will be recalculated when the segment loads
-	fprintf(stderr, "GDB: segment %d not loaded, breakpoint deferred\n", seg);
+	fprintf(stderr, "    [TRANSLATE] Seg %d NOT LOADED yet - deferring (VMA range 0x%08x-0x%08x)\n",
+		seg, gdb_segment_vma[seg].vma_start, gdb_segment_vma[seg].vma_end);
 	fflush(stderr);
 	return 0;  // Invalid address signals translation not yet possible
 }
 
-// Recalculate all breakpoint runtime addresses from stored VMAs
-static void recalculate_breakpoints(void)
+// Resolve VMA breakpoints by scanning the CURRENT app's jump table fresh.
+// Uses local variables (not global gdb_segment_bases) so different apps'
+// _LoadSeg calls don't clobber each other's breakpoint addresses.
+static void resolve_breakpoints_from_jt(void)
 {
-	if (gdb_breakpoint_vmas.empty()) return;
+	if (gdb_breakpoint_vmas.empty()) {
+		fprintf(stderr, "    [RESOLVE] No pending VMAs\n");
+		return;
+	}
+	fprintf(stderr, "    [RESOLVE] Attempting to resolve %zu pending VMAs\n", gdb_breakpoint_vmas.size());
 
-	fprintf(stderr, "Recalculating %zu breakpoints after segment load\n", gdb_breakpoint_vmas.size());
-	gdb_breakpoints.clear();
+	if (!gdb_segment_map_loaded) {
+		load_segments_file();
+		if (!gdb_segment_map_loaded) {
+			fprintf(stderr, "    [RESOLVE] Segment map not loaded, aborting\n");
+			return;
+		}
+	}
 
+	// Read CurrentA5 fresh — this is the app that just loaded a segment
+	uaecptr a5 = get_long(0x904);
+	fprintf(stderr, "    [RESOLVE] A5=0x%08x\n", a5);
+	if (a5 == 0) {
+		fprintf(stderr, "    [RESOLVE] A5 is null, aborting\n");
+		return;
+	}
+
+	// Quick-validate: first JT entry must be a valid Retro68 opcode
+	uae_u16 first_opcode = get_word(a5 + 0x22);
+	fprintf(stderr, "    [RESOLVE] First JT opcode: 0x%04x\n", first_opcode);
+	if (first_opcode != 0x4EF9 && first_opcode != 0x3F3C) {
+		fprintf(stderr, "    [RESOLVE] Invalid JT opcode, aborting\n");
+		return;
+	}
+
+	// Scan JT to compute segment bases using LOCAL arrays
+	uaecptr local_bases[GDB_MAX_SEGMENTS];
+	bool local_loaded[GDB_MAX_SEGMENTS];
+	memset(local_bases, 0, sizeof(local_bases));
+	memset(local_loaded, 0, sizeof(local_loaded));
+
+	int segs_found = 0;
+	int entries_checked = 0;
+	for (int offset = 0x20; offset < 0x800; offset += 8) {
+		uaecptr entry = a5 + offset;
+		uae_u16 seg_num = get_word(entry);
+		uae_u16 opcode = get_word(entry + 2);
+
+		if (seg_num == 0 && opcode == 0) continue;
+		if (seg_num == 0 || seg_num >= GDB_MAX_SEGMENTS) continue;
+
+		entries_checked++;
+		fprintf(stderr, "    [RESOLVE] JT[0x%03x]: seg=%d opcode=0x%04x has_ref=%d\n",
+			offset, seg_num, opcode, gdb_segment_vma[seg_num].has_ref_func);
+
+		if (opcode == 0x4EF9 && !local_loaded[seg_num]) {
+			uaecptr func_addr = get_long(entry + 4);
+			fprintf(stderr, "    [RESOLVE]   -> Loaded! func_addr=0x%08x\n", func_addr);
+			if (gdb_segment_vma[seg_num].has_ref_func) {
+				uaecptr base = calculate_segment_base(seg_num, func_addr);
+				fprintf(stderr, "    [RESOLVE]   -> Calculated seg %d base: 0x%08x\n", seg_num, base);
+				if (base != 0) {
+					local_bases[seg_num] = base;
+					local_loaded[seg_num] = true;
+					segs_found++;
+				}
+			}
+		}
+	}
+	fprintf(stderr, "    [RESOLVE] Scanned JT: checked %d entries, found %d segments\n", entries_checked, segs_found);
+
+	// Try to resolve each VMA breakpoint using the local bases
+	std::vector<uaecptr> new_breakpoints;
 	for (size_t i = 0; i < gdb_breakpoint_vmas.size(); ++i) {
 		uaecptr vma = gdb_breakpoint_vmas[i];
-		uaecptr runtime = translate_symbol_to_runtime(vma);
-		gdb_breakpoints.push_back(runtime);
-		fprintf(stderr, "  Breakpoint %zu: VMA 0x%08x -> runtime 0x%08x\n", i, vma, runtime);
+		int seg = find_segment_for_vma(vma);
+		fprintf(stderr, "    [RESOLVE] VMA 0x%08x -> seg %d, loaded=%d\n",
+			vma, seg, seg > 0 ? local_loaded[seg] : -1);
+		if (seg > 0 && local_loaded[seg]) {
+			uaecptr seg_offset = vma - gdb_segment_vma[seg].vma_start;
+			uaecptr runtime = local_bases[seg] + seg_offset;
+			fprintf(stderr, "    [RESOLVE] Resolved to runtime: 0x%08x\n", runtime);
+			new_breakpoints.push_back(runtime);
+		}
 	}
-	fflush(stderr);
+
+	// Only update if we resolved something
+	if (!new_breakpoints.empty()) {
+		gdb_breakpoints = new_breakpoints;
+		fprintf(stderr, "    [RESOLVE] SUCCESS: Added %zu active breakpoints\n", new_breakpoints.size());
+		for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
+			fprintf(stderr, "      BP %zu: 0x%08x\n", i, gdb_breakpoints[i]);
+		}
+		fflush(stderr);
+	} else {
+		fprintf(stderr, "    [RESOLVE] Failed to resolve any breakpoints\n");
+		fflush(stderr);
+	}
 }
 
 static bool handle_breakpoint(const std::string &payload, bool set)
@@ -592,6 +686,13 @@ static bool handle_breakpoint(const std::string &payload, bool set)
 	size_t comma2 = payload.find(',', comma1 + 1);
 	uaecptr addr = static_cast<uaecptr>(strtoul(payload.substr(comma1 + 1, comma2 - comma1 - 1).c_str(), NULL, 16));
 
+	fprintf(stderr, "\n========== BREAKPOINT HANDLER (set=%d) ==========\n", set);
+	fprintf(stderr, "  Input address: 0x%08x\n", addr);
+	fprintf(stderr, "  gdb_code_base: 0x%08x\n", gdb_code_base);
+	fprintf(stderr, "  gdb_segment_map_loaded: %d\n", gdb_segment_map_loaded);
+	fprintf(stderr, "  Active breakpoints before: %zu\n", gdb_breakpoints.size());
+	fprintf(stderr, "  Pending VMA breakpoints: %zu\n", gdb_breakpoint_vmas.size());
+
 	// Apply address translation for symbol addresses (< 1MB)
 	// High addresses (> 1MB) are already runtime addresses, don't translate
 	uaecptr runtime_addr;
@@ -599,45 +700,38 @@ static bool handle_breakpoint(const std::string &payload, bool set)
 	if (addr < 0x100000) {
 		// Low address - assume it's a symbol VMA, translate using segment info
 		vma_addr = addr;
+		fprintf(stderr, "  -> LOW address (VMA), attempting translation...\n");
 		runtime_addr = translate_symbol_to_runtime(addr);
-		fprintf(stderr, "GDB breakpoint %s: symbol=0x%08x -> runtime=0x%08x\n",
-			set ? "SET" : "REMOVE", addr, runtime_addr);
+		fprintf(stderr, "  -> Translated to runtime: 0x%08x\n", runtime_addr);
 	} else {
 		// High address - already a runtime address, use as-is
 		runtime_addr = addr;
-		fprintf(stderr, "GDB breakpoint %s: raw runtime=0x%08x (no offset applied)\n",
-			set ? "SET" : "REMOVE", runtime_addr);
+		fprintf(stderr, "  -> HIGH address (runtime), using as-is\n");
 	}
-	fflush(stderr);
 
 	if (set) {
-		// Check if already exists
-		for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
-			if (gdb_breakpoints[i] == runtime_addr && runtime_addr != 0) return send_packet("OK");
-		}
-		// Only add to active breakpoints if we got a valid runtime address
-		if (runtime_addr != 0) {
-			gdb_breakpoints.push_back(runtime_addr);
-		}
-		// Always store the VMA for recalculation when segments load
+		// Store the VMA for later resolution (when armed + segments loaded)
 		if (vma_addr != 0) {
-			// Check if VMA already stored
 			bool found = false;
 			for (size_t i = 0; i < gdb_breakpoint_vmas.size(); ++i) {
 				if (gdb_breakpoint_vmas[i] == vma_addr) { found = true; break; }
 			}
 			if (!found) {
+				fprintf(stderr, "  -> Storing pending VMA: 0x%08x\n", vma_addr);
 				gdb_breakpoint_vmas.push_back(vma_addr);
 			}
 		}
-		fprintf(stderr, "GDB breakpoints: %zu active, %zu pending\n",
-			gdb_breakpoints.size(), gdb_breakpoint_vmas.size());
+
+		// Never add to active breakpoints here — wait for arming + JT resolution.
+		// This prevents breakpoints from firing during boot.
+		fprintf(stderr, "  RESULT: %zu active, %zu pending (armed=%d)\n",
+			gdb_breakpoints.size(), gdb_breakpoint_vmas.size(), gdb_breakpoints_armed);
 		fflush(stderr);
 		return send_packet("OK");
 	}
 	// Don't actually remove breakpoints - we want them to persist after GDB disconnects
 	// so we can reconnect when they hit. Just acknowledge the request.
-	fprintf(stderr, "GDB breakpoint remove IGNORED (persisting for reconnect)\n");
+	fprintf(stderr, "  -> REMOVE IGNORED (persisting for reconnect)\n");
 	fflush(stderr);
 	return send_packet("OK");
 }
@@ -669,6 +763,31 @@ static bool handle_command(const std::string &payload)
 	}
 	if (payload == "qOffsets") {
 		return send_packet("Text=0;Data=0;Bss=0");
+	}
+	if (payload == "qArmBreakpoints") {
+		// Adapter tells us the app has launched — start resolving breakpoints
+		fprintf(stderr, "GDB: Breakpoints ARMED by adapter\n");
+		fflush(stderr);
+		gdb_breakpoints_armed = true;
+		gdb_breakpoints.clear();  // Clear any stale boot-time breakpoints
+		gdb_resolve_countdown = 0;  // Resolve immediately on next check
+		return send_packet("OK");
+	}
+	if (payload == "qSegmentBases") {
+		// Return discovered segment bases in format: seg:1:0xbase;2:0xbase;...
+		// Only include segments that are currently loaded
+		std::string response = "seg";
+		bool first = true;
+		for (int i = 1; i < GDB_MAX_SEGMENTS; ++i) {
+			if (gdb_segment_loaded[i]) {
+				char buf[64];
+				snprintf(buf, sizeof(buf), "%s%d:0x%08x", first ? ":" : ";", i, gdb_segment_bases[i]);
+				response += buf;
+				first = false;
+			}
+		}
+		if (response == "seg") response = "seg:none";  // No segments loaded yet
+		return send_packet(response);
 	}
 	if (payload == "qC") {
 		return send_packet("QC0");
@@ -757,12 +876,17 @@ static void handle_stop_loop(int signal)
 		}
 		if (payload.empty()) continue;
 		char cmd = payload[0];
-		if (cmd == 'c') {
-			gdb_single_step = false;
-			break;
-		}
-		if (cmd == 's') {
-			gdb_single_step = true;
+		if (cmd == 'c' || cmd == 's') {
+			// If stopped at a breakpoint, skip the BP check for the next
+			// instruction so c/s actually advances past it.
+			uaecptr pc = m68k_getpc();
+			for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
+				if (gdb_breakpoints[i] == pc) {
+					gdb_skip_next_bp = true;
+					break;
+				}
+			}
+			gdb_single_step = (cmd == 's');
 			break;
 		}
 		if (cmd == 0x03) {
@@ -892,11 +1016,6 @@ void GdbStubAddSegment(uint16 seg_num, uaecptr runtime_addr)
 		gdb_segment_loaded[seg_num] = true;
 		fprintf(stderr, "GDB stub: CODE segment %d loaded at 0x%08x\n", seg_num, runtime_addr);
 		fflush(stderr);
-
-		// Recalculate breakpoints when a new segment loads
-		if (!was_loaded && !gdb_breakpoint_vmas.empty()) {
-			recalculate_breakpoints();
-		}
 	}
 #else
 	(void)seg_num;
@@ -931,12 +1050,20 @@ void GdbStubSetA5(uaecptr a5)
 void GdbStubRescanJumpTable(void)
 {
 #if B2_HAVE_GDBSTUB
-	if (gdb_a5_value == 0) return;
+	// Always read the live CurrentA5 from low-memory global 0x904.
+	// This changes as different apps become frontmost.
+	// Only use the cached gdb_a5_value if it was explicitly set via GdbStubSetA5
+	// (i.e. from the Debugger trap, which we know is our app).
+	uaecptr a5 = gdb_a5_value;
+	if (a5 == 0) {
+		a5 = get_long(0x904);
+	}
+	if (a5 == 0) return;
 
 	// Load segment VMA info from .segments file
 	load_segments_file();
 
-	fprintf(stderr, "Rescanning jump table at A5=0x%08x\n", gdb_a5_value);
+	fprintf(stderr, "Rescanning jump table at A5=0x%08x\n", a5);
 	fflush(stderr);
 
 	// Calculate segment 1 base from the initial PC (from debugger trap)
@@ -966,14 +1093,24 @@ void GdbStubRescanJumpTable(void)
 	// This works because Retro68 patches JSR addresses at load time
 	find_segment2_from_jsr();
 
+	// Quick-validate: check the first JT entry's opcode (at A5+0x22).
+	// Valid Retro68 JT entries have 0x4EF9 (loaded) or 0x3F3C (unloaded).
+	// If the first entry doesn't match, this is not our app's JT — skip silently.
+	uae_u16 first_opcode = get_word(a5 + 0x22);
+	if (first_opcode != 0x4EF9 && first_opcode != 0x3F3C) {
+		return;  // Not a valid Retro68 jump table
+	}
+
+	fprintf(stderr, "GDB: Valid JT found at A5=0x%08x (first opcode=0x%04x)\n", a5, first_opcode);
+	fflush(stderr);
+
 	// Track which segments we've already processed (use first JT entry found)
 	bool segment_processed[GDB_MAX_SEGMENTS] = {false};
 
-	// Scan JT entries looking for newly loaded segments (segments 2+)
-	// JT can be large - scan up to 0x800 (256 entries)
-	int entries_found = 0;
+	// Scan JT entries looking for newly loaded segments
+	int segments_found = 0;
 	for (int offset = 0x20; offset < 0x800; offset += 8) {
-		uaecptr entry = gdb_a5_value + offset;
+		uaecptr entry = a5 + offset;
 		uae_u16 seg_num = get_word(entry);
 		uae_u16 opcode = get_word(entry + 2);
 		uaecptr jt_func_addr = get_long(entry + 4);
@@ -982,48 +1119,30 @@ void GdbStubRescanJumpTable(void)
 		if (seg_num == 0 && opcode == 0) continue;
 		if (seg_num == 0 || seg_num > 15) continue;
 
-		entries_found++;
-		// Log all valid entries for debugging
-		if (opcode == 0x4EF9) {
-			fprintf(stderr, "  JT[0x%03x]: seg %d LOADED addr=0x%08x\n", offset, seg_num, jt_func_addr);
-		} else if (opcode == 0xA9F0) {
-			fprintf(stderr, "  JT[0x%03x]: seg %d UNLOADED offset=0x%08x\n", offset, seg_num, jt_func_addr);
-		} else {
-			fprintf(stderr, "  JT[0x%03x]: seg %d opcode=0x%04x addr=0x%08x\n", offset, seg_num, opcode, jt_func_addr);
-		}
-
 		if (opcode == 0x4EF9) {  // JMP - loaded segment
-			// Only process first JT entry for each segment (assume it's the ref func)
 			if (segment_processed[seg_num]) continue;
 			segment_processed[seg_num] = true;
 
-			// Calculate actual segment base using reference function VMA
 			uaecptr seg_base;
 			if (gdb_segment_map_loaded && gdb_segment_vma[seg_num].has_ref_func) {
-				// Use reference function to calculate proper segment base
 				seg_base = calculate_segment_base(seg_num, jt_func_addr);
-				fprintf(stderr, "JT rescan: seg %d JT func at 0x%08x -> base 0x%08x\n",
-					seg_num, jt_func_addr, seg_base);
-				fprintf(stderr, "  (ref_func_vma=0x%08x, seg_vma_start=0x%08x, offset=0x%x)\n",
-					gdb_segment_vma[seg_num].ref_func_vma,
-					gdb_segment_vma[seg_num].vma_start,
-					gdb_segment_vma[seg_num].ref_func_vma - gdb_segment_vma[seg_num].vma_start);
 			} else {
-				// No segment map, use JT address directly (old behavior)
 				seg_base = jt_func_addr;
-				fprintf(stderr, "JT rescan: seg %d at 0x%08x (no segment map)\n",
-					seg_num, jt_func_addr);
 			}
-			fflush(stderr);
 
-			// Update segment base if changed
 			if (!gdb_segment_loaded[seg_num] || gdb_segment_bases[seg_num] != seg_base) {
+				fprintf(stderr, "GDB: Segment %d loaded at 0x%08x (JT func 0x%08x)\n",
+					seg_num, seg_base, jt_func_addr);
+				fflush(stderr);
 				GdbStubAddSegment(seg_num, seg_base);
 			}
+			segments_found++;
 		}
 	}
-	fprintf(stderr, "JT rescan complete: %d entries found\n", entries_found);
-	fflush(stderr);
+	if (segments_found > 0) {
+		fprintf(stderr, "GDB: JT rescan found %d segment(s)\n", segments_found);
+		fflush(stderr);
+	}
 #endif
 }
 
@@ -1049,7 +1168,10 @@ void GdbStubMaybeAccept(void)
 #if B2_HAVE_GDBSTUB
 	if (!gdb_enabled) return;
 	if (try_accept()) {
-		// New client connected - set flag to trigger stop
+		fprintf(stderr, "GDB client connected (fd=%d)\n", gdb_client_fd);
+		fflush(stderr);
+		// Set flag so CPU loop will enter stop loop and send initial S05
+		// GDB expects this stop reply when connecting via 'target remote'
 		gdb_new_connection = true;
 	}
 #endif
@@ -1090,27 +1212,57 @@ bool GdbStubCheckAsyncBreak(void)
 #endif
 }
 
-static uaecptr last_logged_pc = 0;
-static int pc_log_counter = 0;
-
 bool GdbStubCheckBreakpoint(uaecptr pc)
 {
 #if B2_HAVE_GDBSTUB
 	// Check breakpoints even if GDB is not connected - we'll wait for reconnect
 	if (!gdb_enabled) return false;
 
-	// Log PC range periodically to help debug address issues
-	if (gdb_breakpoints.size() > 0 && ++pc_log_counter >= 1000000) {
-		pc_log_counter = 0;
-		if (pc != last_logged_pc) {
-			fprintf(stderr, "PC sample: 0x%08x (breakpoint at 0x%08x)\n", pc, gdb_breakpoints[0]);
-			fflush(stderr);
-			last_logged_pc = pc;
+	// Debug output every million instructions
+	static int check_count = 0;
+	if (++check_count >= 1000000) {
+		check_count = 0;
+		fprintf(stderr, "[BP CHECK] PC=0x%08x, active BPs=%zu, pending VMAs=%zu\n",
+			pc, gdb_breakpoints.size(), gdb_breakpoint_vmas.size());
+		if (gdb_breakpoints.size() > 0) {
+			fprintf(stderr, "  Active breakpoints: ");
+			for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
+				fprintf(stderr, "0x%08x ", gdb_breakpoints[i]);
+			}
+			fprintf(stderr, "\n");
 		}
+		fflush(stderr);
+	}
+
+	// Skip one check after c/s from a breakpoint (so we advance past it)
+	if (gdb_skip_next_bp) {
+		gdb_skip_next_bp = false;
+		return false;
+	}
+
+	// Periodically resolve pending VMA breakpoints by scanning the current JT.
+	// Only do this AFTER adapter has armed breakpoints (app is launched).
+	// Before arming, breakpoints stay pending to avoid hitting boot code.
+	if (!gdb_breakpoints_armed) return false;
+	if (!gdb_breakpoint_vmas.empty() && --gdb_resolve_countdown <= 0) {
+		gdb_resolve_countdown = 50000;
+		// IMPORTANT: Clear active breakpoints before re-resolving
+		// This ensures breakpoints get fresh runtime addresses from current segment positions
+		fprintf(stderr, "[RESOLVE] Clearing %zu active breakpoints for re-resolution\n", gdb_breakpoints.size());
+		gdb_breakpoints.clear();
+		fflush(stderr);
+		resolve_breakpoints_from_jt();
+		fprintf(stderr, "[RESOLVE] After re-resolution: %zu active breakpoints\n", gdb_breakpoints.size());
+		fflush(stderr);
 	}
 
 	for (size_t i = 0; i < gdb_breakpoints.size(); ++i) {
 		if (gdb_breakpoints[i] == pc) {
+			fprintf(stderr, "\n========== BREAKPOINT HIT ==========\n");
+			fprintf(stderr, "  PC: 0x%08x\n", pc);
+			fprintf(stderr, "  Matched breakpoint %zu at 0x%08x\n", i, gdb_breakpoints[i]);
+			fprintf(stderr, "=====================================\n");
+			fflush(stderr);
 			fprintf(stderr, "*** BREAKPOINT HIT at PC=0x%08x ***\n", pc);
 			fflush(stderr);
 			return true;
@@ -1154,13 +1306,22 @@ void GdbStubEnterStop(int signal)
 		}
 		fprintf(stderr, "*** GDB connected ***\n");
 		fflush(stderr);
-		// Rescan JT to find segments that were loaded while running
-		GdbStubRescanJumpTable();
 	}
+	// Always rescan JT to find segments loaded since last stop
+	GdbStubRescanJumpTable();
 	if (signal == 0) signal = kSigTrap;
 	if (signal != kSigTrap && signal != kSigInt) signal = kSigTrap;
 	handle_stop_loop(signal);
 #else
 	(void)signal;
+#endif
+}
+
+bool GdbStubHasPendingBreakpoints(void)
+{
+#if B2_HAVE_GDBSTUB
+	return !gdb_breakpoint_vmas.empty();
+#else
+	return false;
 #endif
 }

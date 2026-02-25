@@ -1457,19 +1457,15 @@ void m68k_do_execute (void)
 			GdbStubEnterStop(5);
 		uae_u32 opcode = GET_OPCODE;
 		// Check for _LoadSeg trap (0xA9F0) to track CODE segment loading
-		// Only track after our app's debugger trap has fired (GdbStubGetCodeBase() != 0)
-		if ((opcode & 0xFFFF) == 0xA9F0 && GdbStubIsEnabled() && GdbStubGetCodeBase() != 0) {
-			fprintf(stderr, "LoadSeg trap at PC=0x%08x\n", pc);
-			fflush(stderr);
-
+		// Fire when: (a) the Debugger trap has set a code base, OR
+		//            (b) there are pending VMA breakpoints that need segment resolution
+		if ((opcode & 0xFFFF) == 0xA9F0 && GdbStubIsEnabled() &&
+		    (GdbStubGetCodeBase() != 0 || GdbStubHasPendingBreakpoints())) {
 			// Execute the LoadSeg trap
 			(*cpufunctbl[opcode])(opcode);
 			cpu_check_ticks();
 
 			// After LoadSeg completes, rescan the jump table to find newly loaded segments
-			// This is more reliable than trying to parse the segment number from the stack
-			fprintf(stderr, "LoadSeg complete, rescanning JT for new segments\n");
-			fflush(stderr);
 			GdbStubRescanJumpTable();
 
 			// Skip the normal instruction execution since we already did it

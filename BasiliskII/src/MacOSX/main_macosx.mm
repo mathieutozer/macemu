@@ -72,6 +72,7 @@ extern void flush_icache_range(uint8 *start, uint32 size); // from compemu_suppo
 static uint16 gdb_port = 0;
 static bool gdb_wait = false;
 static bool gdb_break = false;
+static char gdb_segments_file[512] = "";
 
 
 // Constants
@@ -266,6 +267,13 @@ int main(int argc, char **argv)
 			gdb_wait = true;
 			gdb_break = true;
 			argv[i] = NULL;
+		} else if (strcmp(argv[i], "--gdb-segments") == 0) {
+			argv[i++] = NULL;
+			if (i < argc) {
+				strncpy(gdb_segments_file, argv[i], sizeof(gdb_segments_file) - 1);
+				gdb_segments_file[sizeof(gdb_segments_file) - 1] = '\0';
+				argv[i] = NULL;
+			}
 		}
 	}
 
@@ -338,6 +346,9 @@ bool InitEmulator (void)
 			fprintf(stderr, "Failed to initialize GDB stub on port %d\n", gdb_port);
 		} else {
 			printf("GDB stub listening on port %d%s\n", gdb_port, gdb_wait ? " (waiting for connection)" : "");
+			if (gdb_segments_file[0] != '\0') {
+				GdbStubSetSegmentsFile(gdb_segments_file);
+			}
 		}
 	}
 

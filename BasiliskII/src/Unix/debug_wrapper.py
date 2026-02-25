@@ -114,11 +114,10 @@ def main():
     if result.returncode != 0:
         print(f"Failed to launch app: {result.stderr}", file=sys.stderr)
 
-    # Wait for GDB port to be ready
-    print(f"Waiting for GDB port {args.gdb_port}...", file=sys.stderr)
-    if not wait_for_port(args.gdb_port, timeout=10):
-        print(f"GDB port {args.gdb_port} not available", file=sys.stderr)
-        # Continue anyway - GDB will fail to connect but show an error
+    # Don't probe the GDB port - connecting and disconnecting would consume
+    # the stub's single client slot, preventing GDB from connecting later.
+    # GDB DAP will retry the connection itself.
+    print(f"GDB port {args.gdb_port} should be ready (BasiliskII started)", file=sys.stderr)
 
     print("Starting GDB DAP...", file=sys.stderr)
 
@@ -128,24 +127,35 @@ def main():
     print(f"Source directory: {source_dir}", file=sys.stderr)
     print(f"Symbol file: {args.symbol_file}", file=sys.stderr)
 
-    # Create a GDB init script to load symbols before DAP starts
+    # Create a GDB init script to load symbols and connect before DAP starts
+    # Note: 'target remote' will pause the emulator (stub sends S05).
+    # Nova should show the debug toolbar - user clicks Continue to resume.
     gdb_init = "/tmp/gdb_init.gdb"
     with open(gdb_init, 'w') as f:
         f.write(f"set architecture m68k:68020\n")
         f.write(f"set remotetimeout 30\n")
         f.write(f"directory {source_dir}\n")
-        # Load symbols - note: can trigger DWARF warnings but symbols still load
         f.write(f"symbol-file {args.symbol_file}\n")
+        f.write(f"target remote localhost:{args.gdb_port}\n")
 
     print(f"GDB init script: {gdb_init}", file=sys.stderr)
 
-    # Exec GDB in DAP mode - this replaces the current process
-    # Use -x to run init script after GDB starts but before DAP
-    os.execv(GDB_PATH, [
-        GDB_PATH,
-        '--interpreter=dap',
-        '-x', gdb_init,
-    ])
+    # Exec DAP logger (wraps GDB) to capture DAP traffic for debugging
+    dap_logger = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dap_logger.py")
+    if os.path.exists(dap_logger):
+        print(f"Using DAP logger: {dap_logger}", file=sys.stderr)
+        os.execv(sys.executable, [
+            sys.executable, dap_logger,
+            '--interpreter=dap',
+            '-x', gdb_init,
+        ])
+    else:
+        # Exec GDB in DAP mode directly
+        os.execv(GDB_PATH, [
+            GDB_PATH,
+            '--interpreter=dap',
+            '-x', gdb_init,
+        ])
 
 
 if __name__ == '__main__':
