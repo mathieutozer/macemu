@@ -46,6 +46,9 @@
 #include <SDL_mutex.h>
 #include <SDL_thread.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <vector>
 #include <string>
 
@@ -865,6 +868,121 @@ static SDL_Surface * init_sdl_video(int width, int height, int bpp, Uint32 flags
 	return guest_surface;
 }
 
+
+/*
+ *  Shared framebuffer
+ *
+ *  With the "sharedfb" pref (or --sharedfb <path>), every presented frame is
+ *  also published to a memory-mapped file, so a host app such as Chicago can
+ *  show the Mac screen without screen capture permissions.
+ *
+ *  Layout: a 4 KB header, then pixels: rows of bytes_per_row bytes, each pixel
+ *  a 32-bit word in host byte order laid out by the channel masks (the format
+ *  of the SDL texture the frame is drawn with).
+ *  Readers use the sequence number as a seqlock: it is odd while a frame is
+ *  being written, so copy the pixels only when it is even and unchanged
+ *  after the copy.
+ */
+
+struct shared_framebuffer_header {
+	char magic[4];				// "CHFB"
+	uint32 version;				// 1
+	uint32 width;
+	uint32 height;
+	uint32 bytes_per_row;
+	uint32 bits_per_pixel;
+	uint32 rmask, gmask, bmask, amask;
+	uint32 sequence;			// odd while a frame is being written
+	uint32 owner_pid;
+	uint64 frame;				// incremented for every published frame
+	uint64 capacity;			// bytes available for pixels
+};
+
+static const size_t shared_fb_header_size = 4096;
+static const size_t shared_fb_capacity = 16 * 1024 * 1024;	// 2048x2048 at 32 bits
+static shared_framebuffer_header *shared_fb = NULL;
+static char shared_fb_path[1024];
+
+static void shared_fb_open(void)
+{
+	const char *path = PrefsFindString("sharedfb");
+	if (path == NULL || *path == 0 || shared_fb)
+		return;
+	snprintf(shared_fb_path, sizeof(shared_fb_path), "%s", path);
+	int fd = open(shared_fb_path, O_CREAT | O_RDWR | O_TRUNC, 0600);
+	if (fd < 0) {
+		printf("WARNING: Cannot create shared framebuffer %s: %s\n", shared_fb_path, strerror(errno));
+		return;
+	}
+	size_t size = shared_fb_header_size + shared_fb_capacity;
+	void *memory = ftruncate(fd, size) == 0 ? mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) : MAP_FAILED;
+	close(fd);
+	if (memory == MAP_FAILED) {
+		printf("WARNING: Cannot map shared framebuffer %s: %s\n", shared_fb_path, strerror(errno));
+		unlink(shared_fb_path);
+		return;
+	}
+	shared_fb = (shared_framebuffer_header *)memory;
+	memset(shared_fb, 0, sizeof(*shared_fb));
+	shared_fb->version = 1;
+	shared_fb->owner_pid = getpid();
+	shared_fb->capacity = shared_fb_capacity;
+	__atomic_thread_fence(__ATOMIC_RELEASE);
+	memcpy(shared_fb->magic, "CHFB", 4);
+}
+
+static void shared_fb_close(void)
+{
+	if (shared_fb == NULL)
+		return;
+	munmap(shared_fb, shared_fb_header_size + shared_fb_capacity);
+	unlink(shared_fb_path);
+	shared_fb = NULL;
+}
+
+// Copies the changed part of the host surface (the whole surface after a
+// mode change). The texture's format, not the surface's, describes the bytes:
+// in 32-bit Mac modes the surface holds big-endian Mac pixels as is.
+// Called with sdl_update_video_mutex held.
+static void shared_fb_publish(SDL_Surface *surface, SDL_Texture *texture, const SDL_Rect &dirty)
+{
+	if (shared_fb == NULL || surface == NULL || texture == NULL)
+		return;
+	Uint32 texture_format;
+	int bits_per_pixel;
+	Uint32 rmask, gmask, bmask, amask;
+	if (SDL_QueryTexture(texture, &texture_format, NULL, NULL, NULL) != 0
+		|| !SDL_PixelFormatEnumToMasks(texture_format, &bits_per_pixel, &rmask, &gmask, &bmask, &amask)
+		|| bits_per_pixel != 32 || surface->format->BytesPerPixel != 4)
+		return;
+	const uint32 bytes_per_row = surface->pitch;
+	if ((size_t)bytes_per_row * surface->h > shared_fb_capacity)
+		return;
+	const bool same_mode = shared_fb->width == (uint32)surface->w && shared_fb->height == (uint32)surface->h
+		&& shared_fb->bytes_per_row == bytes_per_row && shared_fb->rmask == rmask
+		&& shared_fb->gmask == gmask && shared_fb->bmask == bmask;
+	SDL_Rect rect = same_mode ? dirty : SDL_Rect{0, 0, surface->w, surface->h};
+	uint8 *pixels = (uint8 *)shared_fb + shared_fb_header_size;
+
+	__atomic_add_fetch(&shared_fb->sequence, 1, __ATOMIC_ACQ_REL);
+	if (!same_mode) {
+		shared_fb->width = surface->w;
+		shared_fb->height = surface->h;
+		shared_fb->bytes_per_row = bytes_per_row;
+		shared_fb->bits_per_pixel = 32;
+		shared_fb->rmask = rmask;
+		shared_fb->gmask = gmask;
+		shared_fb->bmask = bmask;
+		shared_fb->amask = amask;
+	}
+	const size_t offset = (size_t)rect.x * 4;
+	const size_t length = (size_t)rect.w * 4;
+	for (int y = rect.y; y < rect.y + rect.h; y++)
+		memcpy(pixels + (size_t)y * bytes_per_row + offset, (uint8 *)surface->pixels + (size_t)y * surface->pitch + offset, length);
+	shared_fb->frame++;
+	__atomic_add_fetch(&shared_fb->sequence, 1, __ATOMIC_RELEASE);
+}
+
 static int present_sdl_video()
 {
 	if (SDL_RectEmpty(&sdl_update_video_rect)) return 0;
@@ -907,6 +1025,8 @@ static int present_sdl_video()
 		}
 	}
 	UNLOCK_PALETTE; // passed potential deadlock, can unlock palette
+
+	shared_fb_publish(host_surface, sdl_texture, sdl_update_video_rect);
 	
 	// Update the host OS' texture
 	void * srcPixels = (void *)((uint8_t *)host_surface->pixels +
@@ -1361,6 +1481,8 @@ bool VideoInit(bool classic)
 #endif
 	classic_mode = classic;
 
+	shared_fb_open();
+
 #ifdef ENABLE_VOSF
 	// Zero the mainBuffer structure
 	mainBuffer.dirtyPages = NULL;
@@ -1599,6 +1721,8 @@ void SDL_monitor_desc::video_close(void)
 
 void VideoExit(void)
 {
+	shared_fb_close();
+
 	// Close displays
 	vector<monitor_desc *>::iterator i, end = VideoMonitors.end();
 	for (i = VideoMonitors.begin(); i != end; ++i)

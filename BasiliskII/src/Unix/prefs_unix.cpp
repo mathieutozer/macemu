@@ -42,6 +42,7 @@ prefs_desc platform_prefs_items[] = {
 	{"ignoresegv", TYPE_BOOLEAN, false,    "ignore illegal memory accesses"},
 #endif
 	{"idlewait", TYPE_BOOLEAN, false,      "sleep when idle"},
+	{"sharedfb", TYPE_STRING, false,       "file to publish the screen to, memory-mapped (for host apps)"},
 	{NULL, TYPE_END, false, NULL} // End of list
 };
 
