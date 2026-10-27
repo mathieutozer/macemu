@@ -706,6 +706,8 @@ static SDL_Surface * init_sdl_video(int width, int height, int bpp, Uint32 flags
 	int window_width = width;
 	int window_height = height;
 	Uint32 window_flags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE;
+	if (PrefsFindBool("hidewindow"))
+		window_flags |= SDL_WINDOW_HIDDEN;
 	const int window_flags_to_monitor = SDL_WINDOW_FULLSCREEN;
 	
 	if (flags & SDL_WINDOW_FULLSCREEN) {
@@ -882,6 +884,11 @@ static SDL_Surface * init_sdl_video(int width, int height, int bpp, Uint32 flags
  *  Readers use the sequence number as a seqlock: it is odd while a frame is
  *  being written, so copy the pixels only when it is even and unchanged
  *  after the copy.
+ *
+ *  Version 2 adds an input queue at offset 1024, so the host app can drive
+ *  the Mac without synthesizing host events: it fills events[write_index %
+ *  capacity] and then advances write_index; the emulator drains events up
+ *  to write_index on its event thread and advances read_index.
  */
 
 struct shared_framebuffer_header {
@@ -898,6 +905,30 @@ struct shared_framebuffer_header {
 	uint64 capacity;			// bytes available for pixels
 };
 
+enum {
+	SHARED_INPUT_MOUSE_MOVED = 1,	// x, y: absolute Mac screen position
+	SHARED_INPUT_MOUSE_DOWN = 2,	// code: button (0 = main)
+	SHARED_INPUT_MOUSE_UP = 3,
+	SHARED_INPUT_KEY_DOWN = 4,		// code: Mac (ADB) key code
+	SHARED_INPUT_KEY_UP = 5,
+};
+
+struct shared_input_event {
+	uint32 type;
+	int32 x, y;
+	uint32 code;
+};
+
+static const uint32 shared_input_capacity = 128;
+
+struct shared_input_queue {
+	uint32 write_index;			// advanced by the host only
+	uint32 read_index;			// advanced by the emulator only
+	uint32 reserved[2];
+	shared_input_event events[shared_input_capacity];
+};
+
+static const size_t shared_input_offset = 1024;
 static const size_t shared_fb_header_size = 4096;
 static const size_t shared_fb_capacity = 16 * 1024 * 1024;	// 2048x2048 at 32 bits
 static shared_framebuffer_header *shared_fb = NULL;
@@ -924,7 +955,7 @@ static void shared_fb_open(void)
 	}
 	shared_fb = (shared_framebuffer_header *)memory;
 	memset(shared_fb, 0, sizeof(*shared_fb));
-	shared_fb->version = 1;
+	shared_fb->version = 2;
 	shared_fb->owner_pid = getpid();
 	shared_fb->capacity = shared_fb_capacity;
 	__atomic_thread_fence(__ATOMIC_RELEASE);
@@ -1027,6 +1058,16 @@ static int present_sdl_video()
 	UNLOCK_PALETTE; // passed potential deadlock, can unlock palette
 
 	shared_fb_publish(host_surface, sdl_texture, sdl_update_video_rect);
+
+	// With a hidden window the host app shows the frames; skip drawing them.
+	if (shared_fb && (SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_HIDDEN)) {
+		sdl_update_video_rect.x = 0;
+		sdl_update_video_rect.y = 0;
+		sdl_update_video_rect.w = 0;
+		sdl_update_video_rect.h = 0;
+		SDL_UnlockMutex(sdl_update_video_mutex);
+		return 0;
+	}
 	
 	// Update the host OS' texture
 	void * srcPixels = (void *)((uint8_t *)host_surface->pixels +
@@ -2298,8 +2339,58 @@ static int SDLCALL on_sdl_event_generated(void *userdata, SDL_Event * event)
 }
 
 
+// Feeds input queued by the host app (see shared framebuffer) to the Mac.
+// After a mouse button changes, the rest of the queue waits a couple of
+// passes: the Mac samples the button on its own clock, so a press and
+// release applied in the same pass would never be seen.
+static void shared_fb_poll_input(void)
+{
+	static int passes_to_wait = 0;
+	if (shared_fb == NULL)
+		return;
+	if (passes_to_wait > 0) {
+		passes_to_wait--;
+		return;
+	}
+	shared_input_queue *queue = (shared_input_queue *)((uint8 *)shared_fb + shared_input_offset);
+	const uint32 write = __atomic_load_n(&queue->write_index, __ATOMIC_ACQUIRE);
+	uint32 read = queue->read_index;
+	if (write - read > shared_input_capacity)	// a confused host; skip what it overwrote
+		read = write - shared_input_capacity;
+	for (; read != write; read++) {
+		const shared_input_event &event = queue->events[read % shared_input_capacity];
+		switch (event.type) {
+			case SHARED_INPUT_MOUSE_MOVED:
+				if (!mouse_grabbed)
+					drv->mouse_moved(event.x, event.y);
+				break;
+			case SHARED_INPUT_MOUSE_DOWN:
+				if (event.code < 3) ADBMouseDown(event.code);
+				passes_to_wait = 2;
+				break;
+			case SHARED_INPUT_MOUSE_UP:
+				if (event.code < 3) ADBMouseUp(event.code);
+				passes_to_wait = 2;
+				break;
+			case SHARED_INPUT_KEY_DOWN:
+				ADBKeyDown(event.code & 0x7f);
+				break;
+			case SHARED_INPUT_KEY_UP:
+				ADBKeyUp(event.code & 0x7f);
+				break;
+		}
+		if (passes_to_wait > 0) {
+			read++;
+			break;
+		}
+	}
+	__atomic_store_n(&queue->read_index, read, __ATOMIC_RELEASE);
+}
+
 static void handle_events(void)
 {
+	shared_fb_poll_input();
+
 	SDL_Event events[10];
 	const int n_max_events = sizeof(events) / sizeof(events[0]);
 	int n_events;

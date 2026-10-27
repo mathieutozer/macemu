@@ -574,6 +574,9 @@ int main(int argc, char **argv)
 	sdl_flags |= SDL_INIT_AUDIO;
 #endif
 	assert(sdl_flags != 0);
+	// A host app showing the screen (see sharedfb) owns the UI: no Dock icon or menu bar.
+	if (PrefsFindBool("hidewindow"))
+		SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
 	if (SDL_Init(sdl_flags) == -1) {
 		char str[256];
 		sprintf(str, "Could not initialize SDL: %s.\n", SDL_GetError());

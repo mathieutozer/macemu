@@ -43,6 +43,7 @@ prefs_desc platform_prefs_items[] = {
 #endif
 	{"idlewait", TYPE_BOOLEAN, false,      "sleep when idle"},
 	{"sharedfb", TYPE_STRING, false,       "file to publish the screen to, memory-mapped (for host apps)"},
+	{"hidewindow", TYPE_BOOLEAN, false,    "keep the emulator window hidden (for host apps using sharedfb)"},
 	{NULL, TYPE_END, false, NULL} // End of list
 };
 
